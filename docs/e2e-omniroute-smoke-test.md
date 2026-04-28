@@ -1,8 +1,13 @@
 # SLAI + OmniRoute E2E Smoke Test
 
-This guide verifies the full prepaid flow against the patched OmniRoute fork: SLAI creates an
-OmniRoute key, a user calls OmniRoute `/v1/*`, SLAI syncs call logs, credits are deducted once, and
-the key is suspended when balance reaches zero or below.
+This guide verifies the full prepaid billing flow against the patched OmniRoute
+fork:
+
+1. SLAI creates an OmniRoute API key.
+2. A user calls OmniRoute `/v1/*` directly with that key.
+3. SLAI syncs OmniRoute call logs.
+4. SLAI deducts credits once per external usage event.
+5. SLAI suspends the key when balance reaches zero or below.
 
 ## Prerequisites
 
@@ -10,11 +15,13 @@ the key is suspended when balance reaches zero or below.
 - PostgreSQL for SLAI
 - SLAI API running from this repository
 - `curl` and `jq`
-- An OmniRoute model/provider configuration that can answer `/v1/chat/completions`
+- An OmniRoute model/provider configuration that can answer
+  `/v1/chat/completions`
 
-Use one shared management token for OmniRoute and SLAI. Do not commit this value.
+Use one shared management token for OmniRoute and SLAI. Do not commit this
+value.
 
-## 1. Start OmniRoute
+## 1. Start Patched OmniRoute
 
 Set OmniRoute environment variables before starting the patched fork:
 
@@ -24,7 +31,7 @@ export ALLOW_API_KEY_REVEAL=false
 export OMNIROUTE_MANAGEMENT_TOKEN=<long-random-secret>
 ```
 
-Start OmniRoute using the fork's normal local command. Record its base URL, for example:
+Start OmniRoute using the fork's normal local command. Record its base URL:
 
 ```sh
 export OMNIROUTE_BASE_URL=http://localhost:4000
@@ -32,7 +39,8 @@ export OMNIROUTE_BASE_URL=http://localhost:4000
 
 ## 2. Start SLAI With OmniRoute Enabled
 
-Set SLAI environment variables. `OMNIROUTE_MANAGEMENT_TOKEN` must match OmniRoute.
+Set SLAI environment variables. `OMNIROUTE_MANAGEMENT_TOKEN` must match
+OmniRoute.
 
 ```sh
 export SLAI_API_URL=http://localhost:8080
@@ -48,17 +56,22 @@ export USAGE_SYNC_INTERVAL_SECONDS=60
 export USAGE_SYNC_START_DELAY_SECONDS=10
 ```
 
-Run migrations and seed an admin:
+Run SLAI migrations:
 
 ```sh
 cd services/api
 go run ./cmd/slai-api migrate up
+```
+
+Seed an admin:
+
+```sh
 ADMIN_SEED_EMAIL=admin@example.com \
 ADMIN_SEED_PASSWORD=change-me-admin-password \
 go run ./cmd/slai-api seed-admin
 ```
 
-Start the API:
+Start the SLAI API:
 
 ```sh
 go run ./cmd/slai-api serve
@@ -71,7 +84,7 @@ curl -sS "$SLAI_API_URL/healthz"
 curl -sS "$SLAI_API_URL/readyz" | jq .
 ```
 
-## 3. Login Admin and Create a User
+## 3. Login Admin
 
 Use cookie jars for authenticated requests:
 
@@ -93,7 +106,9 @@ curl -sS -c "$ADMIN_COOKIE" \
   "$SLAI_API_URL/v1/auth/login" | jq .
 ```
 
-Create a normal user:
+## 4. Create a Normal User
+
+Create a user:
 
 ```sh
 curl -sS -c "$USER_COOKIE" \
@@ -112,42 +127,45 @@ curl -sS -c "$USER_COOKIE" \
   -d '{"email":"'"$SLAI_USER_EMAIL"'","password":"'"$SLAI_USER_PASSWORD"'"}' \
   "$SLAI_API_URL/v1/auth/login" | jq .
 
-curl -sS -b "$USER_COOKIE" "$SLAI_API_URL/v1/me" | tee /tmp/slai-user.json | jq .
+curl -sS -b "$USER_COOKIE" \
+  "$SLAI_API_URL/v1/me" | tee /tmp/slai-user.json | jq .
+
 export SLAI_USER_ID=$(jq -r '.user.id' /tmp/slai-user.json)
 ```
 
-## 4. Create a Credit Package if Needed
+## 5. Admin Creates a Credit Package if Needed
 
-Packages are not required for manual top-up, but this verifies the admin package path:
+Packages are not required for manual top-up, but this verifies the admin package
+path:
 
 ```sh
 curl -sS -b "$ADMIN_COOKIE" \
   -H 'Content-Type: application/json' \
   -d '{
-    "name":"Smoke Starter",
-    "description":"Smoke test credits",
-    "creditUnits":10000,
-    "bonusCreditUnits":0,
-    "priceMinor":1000,
-    "currency":"USD",
-    "active":true,
-    "sortOrder":10
+    "name": "Smoke Starter",
+    "description": "Smoke test credits",
+    "creditUnits": 10000,
+    "bonusCreditUnits": 0,
+    "priceMinor": 1000,
+    "currency": "USD",
+    "active": true,
+    "sortOrder": 10
   }' \
   "$SLAI_API_URL/v1/admin/packages" | jq .
 ```
 
-## 5. Manually Top Up the User
+## 6. Admin Manually Tops Up the User
 
 ```sh
 curl -sS -b "$ADMIN_COOKIE" \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: smoke-topup-001' \
   -d '{
-    "userId":"'"$SLAI_USER_ID"'",
-    "amountMinor":1000,
-    "currency":"USD",
-    "creditUnits":10000,
-    "note":"E2E smoke top-up"
+    "userId": "'"$SLAI_USER_ID"'",
+    "amountMinor": 1000,
+    "currency": "USD",
+    "creditUnits": 10000,
+    "note": "E2E smoke top-up"
   }' \
   "$SLAI_API_URL/v1/admin/payments/manual-topup" | jq .
 ```
@@ -155,10 +173,11 @@ curl -sS -b "$ADMIN_COOKIE" \
 Check balance:
 
 ```sh
-curl -sS -b "$USER_COOKIE" "$SLAI_API_URL/v1/balance" | jq .
+curl -sS -b "$USER_COOKIE" \
+  "$SLAI_API_URL/v1/balance" | jq .
 ```
 
-## 6. User Creates an API Key
+## 7. User Creates an API Key
 
 ```sh
 curl -sS -b "$USER_COOKIE" \
@@ -172,14 +191,17 @@ export SLAI_API_KEY_ID=$(jq -r '.api_key.id' /tmp/slai-api-key.json)
 
 The raw API key is shown only once. SLAI stores only hash plus display prefix.
 
-Confirm SLAI stored an OmniRoute key id:
+## 8. Confirm SLAI Created an OmniRoute Key
+
+Confirm SLAI linked the user key to an OmniRoute key ID:
 
 ```sh
 curl -sS -b "$ADMIN_COOKIE" \
   "$SLAI_API_URL/v1/admin/users/$SLAI_USER_ID/api-key" | jq .
 ```
 
-Optional: if you have the management token in this shell, confirm the key exists in OmniRoute:
+Optional: if you have the management token in this shell, confirm the key exists
+in OmniRoute:
 
 ```sh
 curl -sS \
@@ -187,7 +209,7 @@ curl -sS \
   "$OMNIROUTE_BASE_URL/api/keys" | jq .
 ```
 
-## 7. Call OmniRoute With the Generated Key
+## 9. Call OmniRoute With the Generated Key
 
 Use a model configured in OmniRoute:
 
@@ -198,14 +220,19 @@ curl -sS \
   -H "Authorization: Bearer $SLAI_OMNIROUTE_KEY" \
   -H 'Content-Type: application/json' \
   -d '{
-    "model":"'"$OMNIROUTE_MODEL"'",
-    "messages":[{"role":"user","content":"Reply with one short sentence for a SLAI smoke test."}],
-    "max_tokens":32
+    "model": "'"$OMNIROUTE_MODEL"'",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Reply with one short sentence for a SLAI smoke test."
+      }
+    ],
+    "max_tokens": 32
   }' \
   "$OMNIROUTE_BASE_URL/v1/chat/completions" | jq .
 ```
 
-## 8. Trigger Manual Usage Sync
+## 10. Trigger Manual Usage Sync
 
 ```sh
 curl -sS -b "$ADMIN_COOKIE" \
@@ -215,18 +242,26 @@ curl -sS -b "$ADMIN_COOKIE" \
   "$SLAI_API_URL/v1/admin/usage/sync" | jq .
 ```
 
-Check usage, balance, and ledger:
+## 11. Check Usage, Balance, and Ledger
 
 ```sh
-curl -sS -b "$USER_COOKIE" "$SLAI_API_URL/v1/usage?limit=10" | jq .
-curl -sS -b "$USER_COOKIE" "$SLAI_API_URL/v1/balance" | jq .
-curl -sS -b "$USER_COOKIE" "$SLAI_API_URL/v1/ledger" | jq .
+curl -sS -b "$USER_COOKIE" \
+  "$SLAI_API_URL/v1/usage?limit=10" | jq .
+
+curl -sS -b "$USER_COOKIE" \
+  "$SLAI_API_URL/v1/balance" | jq .
+
+curl -sS -b "$USER_COOKIE" \
+  "$SLAI_API_URL/v1/ledger" | jq .
 ```
 
-Expected result: one usage event has `status` set to `billed`, balance is reduced, and the ledger
-contains a `usage_debit` entry with a negative `deltaUnits` value.
+Expected result:
 
-## 9. Confirm Idempotency
+- A usage event has `status` set to `billed`.
+- Balance is reduced.
+- Ledger contains a `usage_debit` entry with a negative `deltaUnits` value.
+
+## 12. Confirm Duplicate Sync Does Not Deduct Again
 
 Run manual sync again:
 
@@ -238,13 +273,15 @@ curl -sS -b "$ADMIN_COOKIE" \
   "$SLAI_API_URL/v1/admin/usage/sync" | jq .
 ```
 
-Expected result: duplicate events are reported or ignored by idempotency, and balance does not
-decrease for the same OmniRoute call log again.
+Expected result:
 
-## 10. Drive Balance to Zero or Below
+- Duplicate events are reported or ignored by idempotency.
+- Balance does not decrease for the same OmniRoute call log again.
 
-For a deterministic test, create a small top-up on a fresh user or repeatedly call OmniRoute until
-usage costs exceed the available balance. Then sync again:
+## 13. Drive Balance to Zero or Below
+
+For a deterministic test, create a fresh user with a small top-up or repeatedly
+call OmniRoute until usage costs exceed the available balance. Then sync again:
 
 ```sh
 for i in $(seq 1 20); do
@@ -252,9 +289,14 @@ for i in $(seq 1 20); do
     -H "Authorization: Bearer $SLAI_OMNIROUTE_KEY" \
     -H 'Content-Type: application/json' \
     -d '{
-      "model":"'"$OMNIROUTE_MODEL"'",
-      "messages":[{"role":"user","content":"Generate a longer smoke-test response so usage is billed."}],
-      "max_tokens":128
+      "model": "'"$OMNIROUTE_MODEL"'",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Generate a longer smoke-test response so usage is billed."
+        }
+      ],
+      "max_tokens": 128
     }' \
     "$OMNIROUTE_BASE_URL/v1/chat/completions" >/dev/null
 done
@@ -266,21 +308,30 @@ curl -sS -b "$ADMIN_COOKIE" \
   "$SLAI_API_URL/v1/admin/usage/sync" | jq .
 ```
 
-Check local and OmniRoute key status:
+## 14. Confirm Key Suspension
+
+Check local key status:
 
 ```sh
 curl -sS -b "$ADMIN_COOKIE" \
   "$SLAI_API_URL/v1/admin/users/$SLAI_USER_ID/api-key" | jq .
+```
 
+Check OmniRoute key status if the management token is available:
+
+```sh
 curl -sS \
   -H "Authorization: Bearer $OMNIROUTE_MANAGEMENT_TOKEN" \
   "$OMNIROUTE_BASE_URL/api/keys" | jq .
 ```
 
-Expected result: SLAI marks the key `SUSPENDED`, and OmniRoute has the matching key disabled with
-`isActive=false` or equivalent status.
+Expected result:
 
-## 11. Check Sync Status
+- SLAI marks the key `SUSPENDED`.
+- OmniRoute has the matching key disabled with `isActive=false` or equivalent
+  status.
+
+## 15. Check Sync Status
 
 ```sh
 curl -sS -b "$ADMIN_COOKIE" \
@@ -303,7 +354,7 @@ Expected fields:
 - `next_run_at`
 - `currently_running`
 
-## Helper Script
+## Optional Helper Script
 
 The repository includes a helper for the common path:
 
@@ -322,6 +373,7 @@ Optional script variables:
 - `OMNIROUTE_MODEL`, default `gpt-4o-mini`
 - `SLAI_TOPUP_CREDIT_UNITS`, default `10000`
 - `SLAI_TOPUP_AMOUNT_MINOR`, default `1000`
-- `SLAI_ROTATE_EXISTING_KEY=true` to rotate if the user already has an active key
+- `SLAI_ROTATE_EXISTING_KEY=true` to rotate if the user already has an active
+  key
 - `SLAI_EXHAUST_BALANCE=true` to run repeated OmniRoute calls and sync again
 - `SLAI_EXHAUST_REQUESTS`, default `20`

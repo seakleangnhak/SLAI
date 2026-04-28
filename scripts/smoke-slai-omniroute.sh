@@ -56,9 +56,11 @@ step() {
 
 sanitize_body() {
   local body="$1"
+
   if [[ -n "${raw_api_key:-}" ]]; then
     body="${body//$raw_api_key/[redacted-api-key]}"
   fi
+
   printf '%s\n' "$body"
 }
 
@@ -70,18 +72,37 @@ request() {
   local data="${5:-}"
   shift 5 || true
 
-  local args=(-sS -o "$response_file" -w '%{http_code}' -X "$method" "$url")
+  local args=(
+    -sS
+    -o "$response_file"
+    -w '%{http_code}'
+    -X "$method"
+    "$url"
+  )
 
   case "$cookie_mode" in
-    none) ;;
-    jar) args+=(-c "$cookie_file") ;;
-    send) args+=(-b "$cookie_file") ;;
-    both) args+=(-b "$cookie_file" -c "$cookie_file") ;;
-    *) echo "unknown cookie mode: $cookie_mode" >&2; exit 1 ;;
+    none)
+      ;;
+    jar)
+      args+=(-c "$cookie_file")
+      ;;
+    send)
+      args+=(-b "$cookie_file")
+      ;;
+    both)
+      args+=(-b "$cookie_file" -c "$cookie_file")
+      ;;
+    *)
+      echo "unknown cookie mode: $cookie_mode" >&2
+      exit 1
+      ;;
   esac
 
   if [[ -n "$data" ]]; then
-    args+=(-H 'Content-Type: application/json' -d "$data")
+    args+=(
+      -H 'Content-Type: application/json'
+      -d "$data"
+    )
   fi
 
   while (( $# > 0 )); do
@@ -95,14 +116,19 @@ request() {
 
 expect_2xx() {
   local label="$1"
+
   case "$RESPONSE_CODE" in
-    2*) return 0 ;;
+    2*)
+      return 0
+      ;;
   esac
 
   printf '%s failed with HTTP %s\n' "$label" "$RESPONSE_CODE" >&2
+
   if [[ -n "$RESPONSE_BODY" ]]; then
     sanitize_body "$RESPONSE_BODY" | jq . >&2 || sanitize_body "$RESPONSE_BODY" >&2
   fi
+
   exit 1
 }
 
@@ -132,11 +158,13 @@ user_auth_payload="$(jq -n \
   --arg password "$SLAI_USER_PASSWORD" \
   '{email:$email,password:$password}')"
 request POST "$SLAI_API_URL/v1/auth/signup" jar "$user_cookie" "$user_auth_payload"
+
 if [[ "$RESPONSE_CODE" != 2* ]]; then
   echo 'Signup did not succeed, trying login for existing user.'
   request POST "$SLAI_API_URL/v1/auth/login" jar "$user_cookie" "$user_auth_payload"
   expect_2xx 'user login'
 fi
+
 print_json
 
 request GET "$SLAI_API_URL/v1/me" send "$user_cookie" ''
@@ -151,7 +179,13 @@ topup_payload="$(jq -n \
   --arg note 'SLAI OmniRoute smoke top-up' \
   --argjson amountMinor "$SLAI_TOPUP_AMOUNT_MINOR" \
   --argjson creditUnits "$SLAI_TOPUP_CREDIT_UNITS" \
-  '{userId:$userId,amountMinor:$amountMinor,currency:$currency,creditUnits:$creditUnits,note:$note}')"
+  '{
+    userId:$userId,
+    amountMinor:$amountMinor,
+    currency:$currency,
+    creditUnits:$creditUnits,
+    note:$note
+  }')"
 request POST "$SLAI_API_URL/v1/admin/payments/manual-topup" \
   send "$admin_cookie" "$topup_payload" \
   "Idempotency-Key: smoke-topup-$(date +%s)"
@@ -161,6 +195,7 @@ print_json
 step 'Creating SLAI API key backed by OmniRoute'
 key_payload="$(jq -n '{name:"Smoke key"}')"
 request POST "$SLAI_API_URL/v1/api-key" send "$user_cookie" "$key_payload"
+
 if [[ "$RESPONSE_CODE" != 2* ]]; then
   if [[ "${SLAI_ROTATE_EXISTING_KEY:-false}" == 'true' ]]; then
     echo 'Create failed, rotating existing key because SLAI_ROTATE_EXISTING_KEY=true.'
@@ -172,6 +207,7 @@ if [[ "$RESPONSE_CODE" != 2* ]]; then
     exit 1
   fi
 fi
+
 expect_2xx 'api key create/rotate'
 raw_api_key="$(printf '%s\n' "$RESPONSE_BODY" | jq -r '.raw_api_key')"
 api_key_id="$(printf '%s\n' "$RESPONSE_BODY" | jq -r '.api_key.id')"
@@ -188,7 +224,12 @@ chat_payload="$(jq -n \
   --arg model "$OMNIROUTE_MODEL" \
   '{
     model:$model,
-    messages:[{role:"user",content:"Reply with one short sentence for a SLAI smoke test."}],
+    messages:[
+      {
+        role:"user",
+        content:"Reply with one short sentence for a SLAI smoke test."
+      }
+    ],
     max_tokens:32
   }')"
 request POST "$OMNIROUTE_BASE_URL/v1/chat/completions" \
@@ -206,9 +247,11 @@ step 'Checking user usage, balance, and ledger'
 request GET "$SLAI_API_URL/v1/usage?limit=10" send "$user_cookie" ''
 expect_2xx 'usage list'
 print_json
+
 request GET "$SLAI_API_URL/v1/balance" send "$user_cookie" ''
 expect_2xx 'balance'
 print_json
+
 request GET "$SLAI_API_URL/v1/ledger" send "$user_cookie" ''
 expect_2xx 'ledger'
 print_json
@@ -220,10 +263,11 @@ print_json
 
 if [[ "${SLAI_EXHAUST_BALANCE:-false}" == 'true' ]]; then
   step "Generating additional usage to test suspension ($SLAI_EXHAUST_REQUESTS requests)"
+
   for _ in $(seq 1 "$SLAI_EXHAUST_REQUESTS"); do
     request POST "$OMNIROUTE_BASE_URL/v1/chat/completions" \
-  none '' "$chat_payload" \
-  "Authorization: Bearer $raw_api_key"
+      none '' "$chat_payload" \
+      "Authorization: Bearer $raw_api_key"
     expect_2xx 'OmniRoute exhaust request'
   done
 
