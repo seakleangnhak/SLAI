@@ -1,13 +1,85 @@
 # SLAI
 
-SLAI is a prepaid AI API credits platform for developers. SLAI owns users,
-prepaid credits, balances, manual top-ups, API key ownership, usage billing,
-admin operations, and audit logs. OmniRoute remains the AI gateway and provider
-routing layer.
+SLAI is a prepaid AI API credits platform for developers.
 
-Users call OmniRoute `/v1/*` directly with an OmniRoute-generated API key that
-SLAI creates and manages. SLAI syncs OmniRoute usage logs and deducts prepaid
-credits. Credits never expire.
+SLAI owns the business layer:
+
+- Users
+- Sessions
+- Credit packages
+- Prepaid balances
+- Manual top-ups
+- API key ownership
+- Usage billing
+- Admin operations
+- Audit logs
+
+OmniRoute remains the AI gateway and provider routing layer.
+Users call OmniRoute `/v1/*` directly with an OmniRoute-generated API key.
+SLAI creates and manages that key, syncs OmniRoute usage logs, and deducts
+prepaid credits through the SLAI ledger.
+
+Credits never expire.
+Credits and money use integer units only.
+Every balance mutation goes through the credit ledger.
+
+## Current Scope
+
+Implemented now:
+
+- Go API foundation
+- PostgreSQL connection and readiness checks
+- SQL migration runner
+- Structured logging
+- Email/password signup and login
+- Argon2id password hashing
+- HttpOnly session cookies
+- USER and ADMIN roles
+- ACTIVE and SUSPENDED users
+- Admin seed command
+- Public active package listing
+- Admin package CRUD
+- Credit balances
+- Credit ledger
+- Manual admin top-ups
+- Admin credit adjustments
+- Admin audit logs
+- API key creation, rotation, revocation, suspension, and resume
+- One ACTIVE API key per user for MVP
+- API key HMAC hash storage with display prefix only
+- OmniRoute management-token HTTP client
+- OmniRoute local/dev mode when integration is disabled
+- Usage ingestion and idempotent credit deduction
+- Mock usage ingestion for local testing
+- Manual admin usage sync endpoint
+- Automatic scheduled usage sync worker
+- PostgreSQL advisory lock for usage sync
+- Admin usage sync status endpoint
+- Docker Compose for local development
+- Basic Next.js app shells
+
+Not included yet:
+
+- Stripe or other payment provider integration
+- Full production admin UI
+- Deep user dashboard UI
+- Real customer support workflows
+- Multi-key user management beyond the MVP one-active-key rule
+
+## Repository Layout
+
+```text
+SLAI/
+  apps/
+    web/
+  services/
+    api/
+  db/
+    migrations/
+  deploy/
+  docs/
+  scripts/
+```
 
 ## Stack
 
@@ -32,21 +104,35 @@ Then open:
 - API readiness: `http://localhost:8080/readyz`
 
 The Compose stack starts Postgres, runs migrations, starts the API, and starts
-the web app. Local Docker defaults to `OMNIROUTE_ENABLED=false`.
+the web app.
+
+Docker defaults to local mode:
+
+```sh
+OMNIROUTE_ENABLED=false
+USAGE_SYNC_WORKER_ENABLED=false
+```
+
+Local mode lets SLAI generate development API keys without calling OmniRoute.
 
 ## Local Development Without Docker
+
+Install dependencies from the repository root:
+
+```sh
+npm install
+```
 
 Start PostgreSQL with the credentials from `services/api/.env.example`, then run:
 
 ```sh
-npm install
 npm run api:migrate
 npm run api:dev
 npm run web:dev
 ```
 
-The migration command runs all unapplied `*.sql` files in `db/migrations` and
-records them in `schema_migrations`.
+The migration command runs all unapplied SQL files in `db/migrations` and records
+them in `schema_migrations`.
 
 Seed an admin after migrations:
 
@@ -57,9 +143,11 @@ ADMIN_SEED_PASSWORD=change-me-admin-password \
 go run ./cmd/slai-api seed-admin
 ```
 
-## Environment
+## API Environment
 
-API variables live in `services/api/.env.example`:
+API variables live in `services/api/.env.example`.
+
+Core settings:
 
 - `APP_ENV`
 - `HTTP_ADDR`
@@ -69,213 +157,244 @@ API variables live in `services/api/.env.example`:
 - `SESSION_SECRET`
 - `COOKIE_SECURE`
 - `SESSION_TTL`
-- `API_KEY_PEPPER`
-- `API_KEY_PREFIX`
 - `ADMIN_SEED_EMAIL`
 - `ADMIN_SEED_PASSWORD`
 - `READINESS_TIMEOUT`
 - `SHUTDOWN_TIMEOUT`
+
+API key settings:
+
+- `API_KEY_PEPPER`
+- `API_KEY_PREFIX`
+
+OmniRoute settings:
+
 - `OMNIROUTE_ENABLED`
 - `OMNIROUTE_BASE_URL`
 - `OMNIROUTE_MANAGEMENT_TOKEN`
 - `OMNIROUTE_USAGE_SYNC_MODE`
 - `OMNIROUTE_HTTP_TIMEOUT_SECONDS`
 - `OMNIROUTE_CALL_LOG_LIMIT`
+
+Usage sync worker settings:
+
 - `USAGE_SYNC_WORKER_ENABLED`
 - `USAGE_SYNC_INTERVAL_SECONDS`
 - `USAGE_SYNC_LOCK_KEY`
 - `USAGE_SYNC_BATCH_LIMIT`
 - `USAGE_SYNC_START_DELAY_SECONDS`
 
-Web variables live in `apps/web/.env.example`:
+Frontend settings live in `apps/web/.env.example`:
 
 - `NEXT_PUBLIC_API_BASE_URL`
 
-## Current Implemented Scope
+## Recommended Local Values
 
-Implemented now:
+For local development without OmniRoute:
 
-- Go API process with structured JSON logging
-- `/healthz` endpoint returning `OK`
-- `/readyz` endpoint checking PostgreSQL connectivity
-- PostgreSQL pool setup
-- Minimal SQL migration runner
-- Initial schema for users, sessions, packages, payments, balances, ledger, API
-  keys, usage events, pricing, audit logs, and OmniRoute sync state
-- Email/password signup and login with Argon2id password hashes
-- HttpOnly session cookie backed by the `sessions` table
-- USER and ADMIN roles
-- ACTIVE and SUSPENDED user statuses
-- `GET /v1/me`, `GET /v1/packages`, `GET /v1/balance`, and `GET /v1/ledger`
-- Admin package create/list/update endpoints
-- Manual admin top-up with payment row, ledger row, balance update,
-  idempotency key, and audit log
-- Admin credit adjustment with required reason, ledger row, balance update,
-  idempotency key, and audit log
-- API key creation, rotation, revocation, suspension, and balance-gated resume
-- One active API key per user for MVP
-- API key storage with HMAC hash plus display prefix only
-- Raw API keys returned once on create or rotate
-- OmniRoute-backed API key management when enabled
-- Local/dev API key generation when OmniRoute is disabled
-- Usage ingestion service for OmniRoute call logs and local/mock events
-- Pricing lookup with a default active pricing rule
-- Integer-only ceil-per-1k token billing
-- Idempotent usage billing through `usage_events` and `credit_ledger_entries`
-- Automatic API key suspension when async usage billing drives balance to zero
-  or below
-- PostgreSQL guard preventing direct `credit_balances` mutation outside the
-  ledger service transaction path
-- Admin seed command: `slai-api seed-admin`
-- Real OmniRoute HTTP client plus stub client for local mode and tests
-- Automatic scheduled usage sync worker with PostgreSQL advisory locking
-- Admin sync-status endpoint
-- Next.js app shells for landing, login, user dashboard, and admin dashboard
-- Docker Compose for Postgres, migrations, API, and web
+```sh
+OMNIROUTE_ENABLED=false
+USAGE_SYNC_WORKER_ENABLED=false
+```
 
-Not implemented yet:
+For a production-like OmniRoute test:
 
-- Stripe or external payment-provider flows
-- Deep production frontend UI beyond the current shells
+```sh
+OMNIROUTE_ENABLED=true
+OMNIROUTE_BASE_URL=http://localhost:4000
+OMNIROUTE_MANAGEMENT_TOKEN=<same-secret-as-omniroute>
+OMNIROUTE_USAGE_SYNC_MODE=call_logs
+OMNIROUTE_HTTP_TIMEOUT_SECONDS=15
+OMNIROUTE_CALL_LOG_LIMIT=100
+USAGE_SYNC_WORKER_ENABLED=true
+USAGE_SYNC_INTERVAL_SECONDS=60
+USAGE_SYNC_START_DELAY_SECONDS=10
+```
 
-## API Surface
+## OmniRoute Requirement
 
-- `POST /v1/auth/signup`
-- `POST /v1/auth/login`
-- `POST /v1/auth/logout`
-- `GET /v1/me`
-- `GET /v1/packages`
-- `GET /v1/balance`
-- `GET /v1/ledger`
-- `GET /v1/usage`
-- `GET /v1/api-key`
-- `POST /v1/api-key`
-- `POST /v1/api-key/rotate`
-- `DELETE /v1/api-key`
-- `GET /v1/admin/packages`
-- `POST /v1/admin/packages`
-- `PATCH /v1/admin/packages/{id}`
-- `POST /v1/admin/payments/manual-topup`
-- `POST /v1/admin/ledger/adjustments`
-- `POST /v1/internal/usage/mock-event`
-- `POST /v1/admin/usage/sync`
-- `GET /v1/admin/usage/sync-status`
-- `GET /v1/admin/usage`
-- `GET /v1/admin/users/{id}/api-key`
-- `POST /v1/admin/users/{id}/api-key/suspend`
-- `POST /v1/admin/users/{id}/api-key/resume`
-- `POST /v1/admin/users/{id}/api-key/revoke`
+Use the patched OmniRoute fork or an upstream build with equivalent management
+auth support:
+
+```text
+https://github.com/seakleangnhak/OmniRoute
+```
+
+OmniRoute must accept trusted server-to-server management requests with:
+
+```http
+Authorization: Bearer <OMNIROUTE_MANAGEMENT_TOKEN>
+```
+
+Recommended OmniRoute environment:
+
+```sh
+REQUIRE_API_KEY=true
+ALLOW_API_KEY_REVEAL=false
+OMNIROUTE_MANAGEMENT_TOKEN=<long-random-secret>
+```
+
+Use the same management token in SLAI:
+
+```sh
+OMNIROUTE_MANAGEMENT_TOKEN=<same-secret>
+```
+
+Do not commit the token.
+Do not log the token.
 
 ## API Key Lifecycle
 
-For MVP, each user can have one `ACTIVE` API key. The database supports multiple
-keys later, but the service logic and partial unique index enforce the MVP rule.
+For MVP, each user can have one ACTIVE API key.
 
-Create:
+SLAI stores only:
 
-- SLAI creates an OmniRoute key when `OMNIROUTE_ENABLED=true`.
-- SLAI creates a local dev key when `OMNIROUTE_ENABLED=false`.
-- The raw key is returned once.
-- SLAI stores only `key_hash` and `key_prefix`.
+- API key HMAC hash
+- Display prefix
+- Status
+- Local metadata
+- OmniRoute key ID when OmniRoute is enabled
 
-Rotate:
+SLAI never stores the raw API key.
+The raw key is returned only once when it is created or rotated.
 
-- SLAI revokes the current active or suspended key.
-- SLAI deletes/disables the old OmniRoute key when enabled.
-- SLAI creates a new key and returns the new raw key once.
+Create flow when `OMNIROUTE_ENABLED=true`:
 
-Revoke:
+1. The user calls `POST /v1/api-key`.
+2. SLAI calls OmniRoute `POST /api/keys` with management-token auth.
+3. OmniRoute returns the raw API key once.
+4. SLAI hashes the raw key and stores only hash plus prefix.
+5. SLAI stores the OmniRoute key ID in `api_keys.omniroute_key_id`.
+6. SLAI returns the raw key once to the user.
 
-- SLAI marks the local key `REVOKED` and sets `revoked_at`.
-- SLAI deletes/disables the OmniRoute key when enabled.
+Create flow when `OMNIROUTE_ENABLED=false`:
 
-Suspend and resume:
+1. The user calls `POST /v1/api-key`.
+2. SLAI generates a local development API key.
+3. SLAI hashes the raw key and stores only hash plus prefix.
+4. SLAI returns the raw key once to the user.
+5. No OmniRoute management request is made.
 
-- Suspend marks the local key `SUSPENDED` and sends `isActive=false` to
-  OmniRoute when enabled.
-- Resume only succeeds when the user balance is greater than zero.
-- Resume marks the key `ACTIVE` and sends `isActive=true` to OmniRoute when
-  enabled.
+Rotate flow:
 
-## Usage Ingestion
+1. SLAI revokes the previous key locally.
+2. SLAI disables or deletes the old OmniRoute key when enabled.
+3. SLAI creates a new key.
+4. SLAI returns the new raw key once.
 
-SLAI bills usage asynchronously from OmniRoute call logs. Users still call
-OmniRoute `/v1/*` directly with the OmniRoute-generated key. SLAI fetches
-`GET /api/usage/call-logs`, maps OmniRoute `apiKeyId` back to
-`api_keys.omniroute_key_id`, writes a `usage_events` row, and deducts credits
-through the ledger in the same database transaction.
+Revoke flow:
 
-Usage idempotency is enforced by `usage_events.external_source` plus
-`usage_events.external_event_id`. Ledger idempotency uses
-`usage:{external_source}:{external_event_id}`. Replaying the same external event
-returns a duplicate result and does not deduct credits again.
+1. SLAI marks the key `REVOKED`.
+2. SLAI sets `revoked_at`.
+3. SLAI disables or deletes the OmniRoute key when enabled.
 
-Pricing uses active `pricing_rules` in this order:
+Suspend and resume flow:
 
-1. Provider and model match
-2. Model-only match
-3. Provider-only match
-4. Default rule where provider and model are both `NULL`
+1. Admins can suspend, resume, or revoke a user key.
+2. SLAI updates local key status.
+3. SLAI calls OmniRoute `PATCH /api/keys/{id}` when enabled.
+4. Resume is allowed only when the user has a positive balance.
 
-The initial migration seeds a safe default rule of 1 input credit unit and 1
-output credit unit per started 1,000 tokens. Calculation uses integer math only:
+## Usage Billing Flow
+
+Users call OmniRoute directly:
 
 ```text
-ceil(tokens / 1000) * units_per_1k
+User application -> OmniRoute /v1/* -> provider
 ```
 
-Async usage can temporarily make a balance negative. When billing leaves the
-balance at or below zero, SLAI marks the API key `SUSPENDED`; if OmniRoute is
-enabled, SLAI also sends `isActive=false` through the OmniRoute client.
+SLAI bills asynchronously:
 
-For local testing, admins can submit a mock event:
-
-```sh
-curl -X POST http://localhost:8080/v1/internal/usage/mock-event \
-  -H 'Content-Type: application/json' \
-  --cookie 'slai_session=...' \
-  -d '{
-    "api_key_id": "...",
-    "external_event_id": "mock-001",
-    "model": "gpt-5.5",
-    "provider": "openai",
-    "input_tokens": 7240,
-    "output_tokens": 357,
-    "occurred_at": "2026-04-28T10:00:00Z"
-  }'
+```text
+SLAI usage sync -> OmniRoute call logs -> usage_events -> credit ledger -> balance
 ```
+
+Each usage event is identified by:
+
+- `external_source`
+- `external_event_id`
+
+The database unique constraint on those fields prevents double ingestion.
+The ledger mutation also uses an idempotency key:
+
+```text
+usage:{external_source}:{external_event_id}
+```
+
+If a duplicate event arrives, SLAI returns a duplicate result and does not deduct
+credits again.
+
+If an event references an unknown API key, SLAI ignores it and does not deduct
+credits.
+
+If async billing drives a balance below zero, SLAI keeps the negative balance and
+suspends the API key to prevent future usage.
+
+## Pricing
+
+Pricing rules are stored in `pricing_rules`.
+
+The initial migration seeds a default active rule:
+
+```text
+provider = NULL
+model = NULL
+input_cost_units_per_1k = 1
+output_cost_units_per_1k = 1
+active = true
+```
+
+Pricing lookup order:
+
+1. Provider plus model exact match
+2. Model-only match
+3. Provider-only match
+4. Default rule where provider and model are both NULL
+
+Cost uses integer math only:
+
+```text
+input_cost = ceil(input_tokens / 1000) * input_cost_units_per_1k
+output_cost = ceil(output_tokens / 1000) * output_cost_units_per_1k
+total_cost = input_cost + output_cost
+```
+
+Zero tokens cost zero.
+There is no minimum charge yet.
 
 ## Automatic Usage Sync Worker
 
 The automatic scheduled usage sync worker is implemented.
 
-When `USAGE_SYNC_WORKER_ENABLED=true`, the API starts a background worker. The
-worker waits `USAGE_SYNC_START_DELAY_SECONDS`, then runs every
-`USAGE_SYNC_INTERVAL_SECONDS`. Each tick uses the same idempotent billing service
-as `POST /v1/admin/usage/sync`.
+When enabled, the API process starts a background worker on startup.
+The worker waits for `USAGE_SYNC_START_DELAY_SECONDS`, then runs every
+`USAGE_SYNC_INTERVAL_SECONDS`.
 
-Recommended production values:
+Each tick:
+
+1. Acquires a PostgreSQL advisory lock.
+2. Skips the tick if another process holds the lock.
+3. Calls the existing usage sync service.
+4. Processes OmniRoute call logs.
+5. Deducts credits through the ledger.
+6. Suspends keys when balances are zero or negative.
+7. Releases the advisory lock.
+
+The advisory lock protects multi-replica deployments.
+You can still choose to run only one worker-enabled API replica in production,
+but multiple replicas are protected by the database lock.
+
+Recommended production settings:
 
 ```sh
 USAGE_SYNC_WORKER_ENABLED=true
 USAGE_SYNC_INTERVAL_SECONDS=60
 USAGE_SYNC_START_DELAY_SECONDS=10
 USAGE_SYNC_LOCK_KEY=slai_usage_sync
-USAGE_SYNC_BATCH_LIMIT=
+USAGE_SYNC_BATCH_LIMIT=100
 ```
 
-If `USAGE_SYNC_BATCH_LIMIT` is empty or non-positive, SLAI uses
-`OMNIROUTE_CALL_LOG_LIMIT`.
-
-The worker uses a PostgreSQL advisory lock based on `USAGE_SYNC_LOCK_KEY`, so
-multiple API replicas do not process the same sync batch concurrently. Running
-only one worker-enabled replica is still the simplest production setup; the DB
-lock protects against accidental overlap.
-
-When `OMNIROUTE_ENABLED=false`, an enabled worker logs that sync is skipped and
-startup remains healthy.
-
-## Sync Status Endpoint
+## Sync Status
 
 Admins can inspect in-memory sync status:
 
@@ -290,105 +409,194 @@ The response includes:
 - `last_finished_at`
 - `last_success_at`
 - `last_error`
-- `last_result.fetched`
-- `last_result.billed`
-- `last_result.duplicate`
-- `last_result.ignored`
-- `last_result.failed`
-- `last_result.suspended_keys`
+- `last_result`
 - `next_run_at`
 - `currently_running`
 
-Manual admin sync remains available:
+Manual sync updates the same status tracker.
 
-```http
-POST /v1/admin/usage/sync
-```
+## Main API Endpoints
 
-Manual sync uses `OMNIROUTE_USAGE_SYNC_MODE`. `call_logs` mode uses
-`GET /api/usage/call-logs?limit=...`; OmniRoute does not currently support a
-`since` query for this endpoint, so SLAI relies on usage-event idempotency.
-`usage_history` mode calls `GET /api/usage/history`, but SLAI treats it as
-unsupported unless the response contains stable event IDs and `apiKeyId`.
-`call_logs` is preferred.
+Public and authenticated endpoints:
 
-## OmniRoute Setup
+- `GET /healthz`
+- `GET /readyz`
+- `POST /v1/auth/signup`
+- `POST /v1/auth/login`
+- `POST /v1/auth/logout`
+- `GET /v1/me`
+- `GET /v1/packages`
+- `GET /v1/balance`
+- `GET /v1/ledger`
+- `GET /v1/usage`
+- `GET /v1/api-key`
+- `POST /v1/api-key`
+- `POST /v1/api-key/rotate`
+- `DELETE /v1/api-key`
 
-Use the patched OmniRoute fork or an upstream build with equivalent trusted
-management-auth support:
+Admin endpoints:
 
-- https://github.com/seakleangnhak/OmniRoute
+- `GET /v1/admin/packages`
+- `POST /v1/admin/packages`
+- `PATCH /v1/admin/packages/{id}`
+- `POST /v1/admin/payments/manual-topup`
+- `POST /v1/admin/ledger/adjustments`
+- `POST /v1/admin/usage/sync`
+- `GET /v1/admin/usage/sync-status`
+- `GET /v1/admin/usage`
+- `GET /v1/admin/users/{id}/api-key`
+- `POST /v1/admin/users/{id}/api-key/suspend`
+- `POST /v1/admin/users/{id}/api-key/resume`
+- `POST /v1/admin/users/{id}/api-key/revoke`
 
-Recommended OmniRoute environment:
+Local and internal testing endpoint:
 
-```sh
-REQUIRE_API_KEY=true
-ALLOW_API_KEY_REVEAL=false
-OMNIROUTE_MANAGEMENT_TOKEN=<long-random-secret>
-```
+- `POST /v1/internal/usage/mock-event`
 
-SLAI environment for a real OmniRoute deployment:
+The mock usage endpoint currently requires an ADMIN session.
 
-```sh
-OMNIROUTE_ENABLED=true
-OMNIROUTE_BASE_URL=https://your-omniroute-domain.com
-OMNIROUTE_MANAGEMENT_TOKEN=<same-secret>
-OMNIROUTE_USAGE_SYNC_MODE=call_logs
-OMNIROUTE_HTTP_TIMEOUT_SECONDS=15
-OMNIROUTE_CALL_LOG_LIMIT=100
-USAGE_SYNC_WORKER_ENABLED=true
-USAGE_SYNC_INTERVAL_SECONDS=60
-USAGE_SYNC_START_DELAY_SECONDS=10
-USAGE_SYNC_LOCK_KEY=slai_usage_sync
-USAGE_SYNC_BATCH_LIMIT=
-```
+## Manual Top-Up Flow
 
-With this configuration, users call OmniRoute `/v1/*` directly using keys
-created through SLAI. SLAI creates, disables, enables, deletes, and lists keys
-through OmniRoute `/api/keys*`, then syncs `/api/usage/call-logs` to deduct
-prepaid credits.
+Manual top-ups are admin-created only.
 
-## Local Mode
+A manual top-up creates all of the following in one database transaction:
 
-Local development defaults to `OMNIROUTE_ENABLED=false`. In this mode SLAI still
-creates user API keys, but they are local `API_KEY_PREFIX` keys with no
-`omniroute_key_id`. Usage billing can still be exercised with the admin mock
-usage endpoint.
+- A `payments` row
+- A `credit_ledger_entries` row with type `payment_credit`
+- A `credit_balances` update
+- An `admin_audit_logs` row
 
-## End-to-End Smoke Test
+Use an idempotency key for safe retries.
 
-Use the E2E guide to verify SLAI against the patched OmniRoute fork with
-management-token auth:
-
-- `docs/e2e-omniroute-smoke-test.md`
-
-The guide covers admin login, user signup, manual top-up, API key creation, an
-OmniRoute `/v1/chat/completions` call, manual usage sync, duplicate sync
-behavior, balance and ledger checks, key suspension, and the sync-status
-endpoint.
-
-A helper script is available for the common curl flow:
+Example:
 
 ```sh
-SLAI_API_URL=http://localhost:8080 \
-SLAI_ADMIN_EMAIL=admin@example.com \
-SLAI_ADMIN_PASSWORD=change-me-admin-password \
-SLAI_USER_EMAIL=smoke-user@example.com \
-SLAI_USER_PASSWORD=change-me-user-password \
-OMNIROUTE_BASE_URL=http://localhost:4000 \
+curl -sS -X POST "$SLAI_API_URL/v1/admin/payments/manual-topup" \
+  -b admin.cookies \
+  -c admin.cookies \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: topup-example-001' \
+  -d '{
+    "userId": "<user-id>",
+    "packageId": null,
+    "amountMinor": 1000,
+    "currency": "USD",
+    "creditUnits": 1000,
+    "note": "Smoke test top-up"
+  }'
+```
+
+## Admin Adjustment Flow
+
+Admin adjustments require a reason.
+
+An adjustment creates all of the following in one database transaction:
+
+- A `credit_ledger_entries` row
+- A `credit_balances` update
+- An `admin_audit_logs` row
+
+Positive adjustments use type `admin_adjustment_credit`.
+Negative adjustments use type `admin_adjustment_debit`.
+
+## Mock Usage Ingestion
+
+For local testing without OmniRoute, create a user key and ingest a mock event:
+
+```sh
+curl -sS -X POST "$SLAI_API_URL/v1/internal/usage/mock-event" \
+  -b admin.cookies \
+  -c admin.cookies \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "api_key_id": "<slai-api-key-id>",
+    "external_event_id": "mock-001",
+    "model": "gpt-5.5",
+    "provider": "openai",
+    "input_tokens": 7240,
+    "output_tokens": 357,
+    "occurred_at": "2026-04-28T10:00:00Z"
+  }'
+```
+
+Reusing the same `external_event_id` returns a duplicate result and does not
+charge again.
+
+## E2E Smoke Test
+
+The full SLAI plus OmniRoute smoke test guide is here:
+
+```text
+docs/e2e-omniroute-smoke-test.md
+```
+
+An optional helper script is here:
+
+```text
 scripts/smoke-slai-omniroute.sh
 ```
 
-## Useful Commands
+Required script environment:
+
+- `SLAI_API_URL`
+- `SLAI_ADMIN_EMAIL`
+- `SLAI_ADMIN_PASSWORD`
+- `SLAI_USER_EMAIL`
+- `SLAI_USER_PASSWORD`
+- `OMNIROUTE_BASE_URL`
+
+Optional script environment:
+
+- `OMNIROUTE_MANAGEMENT_TOKEN`
+- `OMNIROUTE_SMOKE_MODEL`
+- `SLAI_SMOKE_TOPUP_UNITS`
+- `SLAI_SMOKE_TOPUP_MINOR`
+
+## Verification Commands
+
+From the repository root:
 
 ```sh
-cd services/api
+find services/api -name '*.go' -print0 | xargs -0 gofmt -w
+```
+
+From `services/api`:
+
+```sh
 go test ./...
 go vet ./...
 ```
+
+From the repository root:
 
 ```sh
 npm --workspace apps/web run build
 docker compose -f deploy/docker-compose.yml config
 bash -n scripts/smoke-slai-omniroute.sh
 ```
+
+## Security Notes
+
+- Raw API keys are never stored.
+- Raw API keys are returned only once on create or rotate.
+- API key hashes use an application pepper.
+- The management token is required only for SLAI-to-OmniRoute management calls.
+- Do not print the management token in logs.
+- Do not include raw API keys in structured logs.
+- Session cookies are HttpOnly.
+- Set `COOKIE_SECURE=true` when serving over HTTPS.
+
+## Deployment Notes
+
+The Docker Compose file is intended for local development and as a starting point
+for Dokploy or Traefik deployment.
+
+For production-like deployment:
+
+- Use managed PostgreSQL or a durable Postgres volume.
+- Set strong values for `SESSION_SECRET` and `API_KEY_PEPPER`.
+- Set `COOKIE_SECURE=true` behind HTTPS.
+- Set `OMNIROUTE_ENABLED=true`.
+- Set a long random `OMNIROUTE_MANAGEMENT_TOKEN`.
+- Enable the usage sync worker on one or more API replicas.
+- Let the PostgreSQL advisory lock protect against concurrent sync runs.

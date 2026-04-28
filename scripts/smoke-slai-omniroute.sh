@@ -1,290 +1,650 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
-required_vars=(
-  SLAI_API_URL
-  SLAI_ADMIN_EMAIL
-  SLAI_ADMIN_PASSWORD
-  SLAI_USER_EMAIL
-  SLAI_USER_PASSWORD
-  OMNIROUTE_BASE_URL
-)
+set -Eeuo pipefail
 
-missing=()
-for name in "${required_vars[@]}"; do
+# Smoke test for the SLAI + OmniRoute prepaid billing path.
+#
+# Required environment:
+#   SLAI_API_URL
+#   SLAI_ADMIN_EMAIL
+#   SLAI_ADMIN_PASSWORD
+#   SLAI_USER_EMAIL
+#   SLAI_USER_PASSWORD
+#   OMNIROUTE_BASE_URL
+#
+# Optional environment:
+#   OMNIROUTE_MANAGEMENT_TOKEN
+#   OMNIROUTE_SMOKE_MODEL
+#   SLAI_SMOKE_TOPUP_UNITS
+#   SLAI_SMOKE_TOPUP_MINOR
+#   SLAI_SMOKE_EXHAUST
+#
+# The script does not print passwords or management tokens.
+# It prints the generated raw API key once because that key is needed to call
+# OmniRoute during local smoke testing. Error output is redacted.
+
+SCRIPT_NAME="$(basename "$0")"
+WORK_DIR=""
+ADMIN_COOKIES=""
+USER_COOKIES=""
+HTTP_STATUS=""
+HTTP_BODY=""
+RAW_API_KEY=""
+SLAI_API_KEY_ID=""
+SLAI_USER_ID=""
+SLAI_PACKAGE_ID=""
+
+log() {
+  printf '[%s] %s\n' "$SCRIPT_NAME" "$*"
+}
+
+fail() {
+  printf '[%s] ERROR: %s\n' "$SCRIPT_NAME" "$*" >&2
+  exit 1
+}
+
+require_env() {
+  local name="$1"
+
   if [[ -z "${!name:-}" ]]; then
-    missing+=("$name")
+    fail "missing required environment variable: $name"
   fi
-done
-
-if (( ${#missing[@]} > 0 )); then
-  printf 'Missing required environment variables:\n' >&2
-  printf '  %s\n' "${missing[@]}" >&2
-  exit 1
-fi
-
-if ! command -v curl >/dev/null 2>&1; then
-  echo 'curl is required' >&2
-  exit 1
-fi
-
-if ! command -v jq >/dev/null 2>&1; then
-  echo 'jq is required' >&2
-  exit 1
-fi
-
-SLAI_API_URL="${SLAI_API_URL%/}"
-OMNIROUTE_BASE_URL="${OMNIROUTE_BASE_URL%/}"
-OMNIROUTE_MODEL="${OMNIROUTE_MODEL:-gpt-4o-mini}"
-SLAI_TOPUP_CREDIT_UNITS="${SLAI_TOPUP_CREDIT_UNITS:-10000}"
-SLAI_TOPUP_AMOUNT_MINOR="${SLAI_TOPUP_AMOUNT_MINOR:-1000}"
-SLAI_EXHAUST_REQUESTS="${SLAI_EXHAUST_REQUESTS:-20}"
-
-tmpdir="$(mktemp -d)"
-trap 'rm -rf "$tmpdir"' EXIT
-
-admin_cookie="$tmpdir/admin.cookies"
-user_cookie="$tmpdir/user.cookies"
-response_file="$tmpdir/response.json"
-RESPONSE_CODE=""
-RESPONSE_BODY=""
-raw_api_key=""
-
-step() {
-  printf '\n==> %s\n' "$1"
 }
 
-sanitize_body() {
+require_command() {
+  local name="$1"
+
+  if ! command -v "$name" >/dev/null 2>&1; then
+    fail "required command not found: $name"
+  fi
+}
+
+cleanup() {
+  if [[ -n "$WORK_DIR" && -d "$WORK_DIR" ]]; then
+    rm -rf "$WORK_DIR"
+  fi
+}
+
+redact_text() {
+  local text="$1"
+
+  if [[ -n "${RAW_API_KEY:-}" ]]; then
+    text="${text//$RAW_API_KEY/[redacted-api-key]}"
+  fi
+
+  if [[ -n "${SLAI_ADMIN_PASSWORD:-}" ]]; then
+    text="${text//$SLAI_ADMIN_PASSWORD/[redacted-admin-password]}"
+  fi
+
+  if [[ -n "${SLAI_USER_PASSWORD:-}" ]]; then
+    text="${text//$SLAI_USER_PASSWORD/[redacted-user-password]}"
+  fi
+
+  if [[ -n "${OMNIROUTE_MANAGEMENT_TOKEN:-}" ]]; then
+    text="${text//$OMNIROUTE_MANAGEMENT_TOKEN/[redacted-management-token]}"
+  fi
+
+  printf '%s' "$text" \
+    | sed -E 's/sk_slai[_A-Za-z0-9.-]{12,}/[redacted-api-key]/g' \
+    | sed -E 's/slai[_A-Za-z0-9.-]{12,}/[redacted-api-key]/g' \
+    | sed -E 's/(Authorization: Bearer )[[:graph:]]+/\1[redacted]/g'
+}
+
+print_body_redacted() {
   local body="$1"
+  local redacted
 
-  if [[ -n "${raw_api_key:-}" ]]; then
-    body="${body//$raw_api_key/[redacted-api-key]}"
+  redacted="$(redact_text "$body")"
+
+  if jq -e . >/dev/null 2>&1 <<<"$redacted"; then
+    jq . <<<"$redacted"
+    return
   fi
 
-  printf '%s\n' "$body"
+  printf '%s\n' "$redacted"
 }
 
-request() {
+make_json_login() {
+  local email="$1"
+  local password="$2"
+
+  jq -n \
+    --arg email "$email" \
+    --arg password "$password" \
+    '{email: $email, password: $password}'
+}
+
+make_json_package() {
+  jq -n \
+    '{
+      name: "Smoke Test Pack",
+      description: "Temporary package for E2E testing",
+      creditUnits: 1000,
+      bonusCreditUnits: 0,
+      priceMinor: 1000,
+      currency: "USD",
+      active: true,
+      sortOrder: 10
+    }'
+}
+
+make_json_topup() {
+  local user_id="$1"
+  local package_id="$2"
+  local amount_minor="$3"
+  local credit_units="$4"
+
+  jq -n \
+    --arg userId "$user_id" \
+    --arg packageId "$package_id" \
+    --argjson amountMinor "$amount_minor" \
+    --argjson creditUnits "$credit_units" \
+    '{
+      userId: $userId,
+      packageId: $packageId,
+      amountMinor: $amountMinor,
+      currency: "USD",
+      creditUnits: $creditUnits,
+      note: "E2E smoke test top-up"
+    }'
+}
+
+make_json_key_create() {
+  jq -n '{name: "Smoke Test Key"}'
+}
+
+make_json_adjustment() {
+  local user_id="$1"
+  local delta_units="$2"
+  local reason="$3"
+
+  jq -n \
+    --arg userId "$user_id" \
+    --argjson deltaUnits "$delta_units" \
+    --arg reason "$reason" \
+    '{userId: $userId, deltaUnits: $deltaUnits, reason: $reason}'
+}
+
+make_json_chat() {
+  local message="$1"
+
+  jq -n \
+    --arg model "${OMNIROUTE_SMOKE_MODEL:-gpt-4o-mini}" \
+    --arg content "$message" \
+    '{
+      model: $model,
+      messages: [
+        {
+          role: "user",
+          content: $content
+        }
+      ]
+    }'
+}
+
+slai_json() {
   local method="$1"
-  local url="$2"
-  local cookie_mode="$3"
-  local cookie_file="$4"
-  local data="${5:-}"
-  shift 5 || true
+  local path="$2"
+  local cookie_jar="$3"
+  local body="$4"
+  shift 4
 
-  local args=(
-    -sS
-    -o "$response_file"
-    -w '%{http_code}'
-    -X "$method"
-    "$url"
-  )
+  local response_file="$WORK_DIR/slai-response.json"
+  local error_file="$WORK_DIR/slai-curl.err"
+  local url="${SLAI_API_URL}${path}"
+  local args=(-sS -X "$method" -o "$response_file" -w '%{http_code}')
 
-  case "$cookie_mode" in
-    none)
-      ;;
-    jar)
-      args+=(-c "$cookie_file")
-      ;;
-    send)
-      args+=(-b "$cookie_file")
-      ;;
-    both)
-      args+=(-b "$cookie_file" -c "$cookie_file")
-      ;;
-    *)
-      echo "unknown cookie mode: $cookie_mode" >&2
-      exit 1
-      ;;
-  esac
+  args+=(-H 'Content-Type: application/json')
 
-  if [[ -n "$data" ]]; then
-    args+=(
-      -H 'Content-Type: application/json'
-      -d "$data"
-    )
+  if [[ -n "$cookie_jar" ]]; then
+    args+=(-b "$cookie_jar" -c "$cookie_jar")
   fi
 
-  while (( $# > 0 )); do
+  if [[ -n "$body" ]]; then
+    args+=(-d "$body")
+  fi
+
+  while (($# > 0)); do
     args+=(-H "$1")
     shift
   done
 
-  RESPONSE_CODE="$(curl "${args[@]}")"
-  RESPONSE_BODY="$(cat "$response_file")"
+  args+=("$url")
+
+  if ! HTTP_STATUS="$(curl "${args[@]}" 2>"$error_file")"; then
+    local curl_error
+    curl_error="$(cat "$error_file")"
+    fail "curl failed for $method $path: $(redact_text "$curl_error")"
+  fi
+
+  HTTP_BODY="$(cat "$response_file")"
+}
+
+omniroute_json() {
+  local method="$1"
+  local path="$2"
+  local body="$3"
+  shift 3
+
+  local response_file="$WORK_DIR/omniroute-response.json"
+  local error_file="$WORK_DIR/omniroute-curl.err"
+  local url="${OMNIROUTE_BASE_URL}${path}"
+  local args=(-sS -X "$method" -o "$response_file" -w '%{http_code}')
+
+  args+=(-H 'Content-Type: application/json')
+
+  while (($# > 0)); do
+    args+=(-H "$1")
+    shift
+  done
+
+  if [[ -n "$body" ]]; then
+    args+=(-d "$body")
+  fi
+
+  args+=("$url")
+
+  if ! HTTP_STATUS="$(curl "${args[@]}" 2>"$error_file")"; then
+    local curl_error
+    curl_error="$(cat "$error_file")"
+    fail "curl failed for OmniRoute $method $path: $(redact_text "$curl_error")"
+  fi
+
+  HTTP_BODY="$(cat "$response_file")"
 }
 
 expect_2xx() {
   local label="$1"
 
-  case "$RESPONSE_CODE" in
-    2*)
-      return 0
-      ;;
-  esac
-
-  printf '%s failed with HTTP %s\n' "$label" "$RESPONSE_CODE" >&2
-
-  if [[ -n "$RESPONSE_BODY" ]]; then
-    sanitize_body "$RESPONSE_BODY" | jq . >&2 || sanitize_body "$RESPONSE_BODY" >&2
-  fi
-
-  exit 1
-}
-
-print_json() {
-  if [[ -n "$RESPONSE_BODY" ]]; then
-    sanitize_body "$RESPONSE_BODY" | jq .
-  fi
-}
-
-step 'Checking SLAI readiness'
-request GET "$SLAI_API_URL/readyz" none '' ''
-expect_2xx 'SLAI readiness check'
-print_json
-
-step 'Logging in admin'
-admin_login_payload="$(jq -n \
-  --arg email "$SLAI_ADMIN_EMAIL" \
-  --arg password "$SLAI_ADMIN_PASSWORD" \
-  '{email:$email,password:$password}')"
-request POST "$SLAI_API_URL/v1/auth/login" jar "$admin_cookie" "$admin_login_payload"
-expect_2xx 'admin login'
-print_json
-
-step 'Creating or logging in smoke user'
-user_auth_payload="$(jq -n \
-  --arg email "$SLAI_USER_EMAIL" \
-  --arg password "$SLAI_USER_PASSWORD" \
-  '{email:$email,password:$password}')"
-request POST "$SLAI_API_URL/v1/auth/signup" jar "$user_cookie" "$user_auth_payload"
-
-if [[ "$RESPONSE_CODE" != 2* ]]; then
-  echo 'Signup did not succeed, trying login for existing user.'
-  request POST "$SLAI_API_URL/v1/auth/login" jar "$user_cookie" "$user_auth_payload"
-  expect_2xx 'user login'
-fi
-
-print_json
-
-request GET "$SLAI_API_URL/v1/me" send "$user_cookie" ''
-expect_2xx 'fetch current user'
-user_id="$(printf '%s\n' "$RESPONSE_BODY" | jq -r '.user.id')"
-printf 'Smoke user id: %s\n' "$user_id"
-
-step 'Manual top-up user'
-topup_payload="$(jq -n \
-  --arg userId "$user_id" \
-  --arg currency 'USD' \
-  --arg note 'SLAI OmniRoute smoke top-up' \
-  --argjson amountMinor "$SLAI_TOPUP_AMOUNT_MINOR" \
-  --argjson creditUnits "$SLAI_TOPUP_CREDIT_UNITS" \
-  '{
-    userId:$userId,
-    amountMinor:$amountMinor,
-    currency:$currency,
-    creditUnits:$creditUnits,
-    note:$note
-  }')"
-request POST "$SLAI_API_URL/v1/admin/payments/manual-topup" \
-  send "$admin_cookie" "$topup_payload" \
-  "Idempotency-Key: smoke-topup-$(date +%s)"
-expect_2xx 'manual top-up'
-print_json
-
-step 'Creating SLAI API key backed by OmniRoute'
-key_payload="$(jq -n '{name:"Smoke key"}')"
-request POST "$SLAI_API_URL/v1/api-key" send "$user_cookie" "$key_payload"
-
-if [[ "$RESPONSE_CODE" != 2* ]]; then
-  if [[ "${SLAI_ROTATE_EXISTING_KEY:-false}" == 'true' ]]; then
-    echo 'Create failed, rotating existing key because SLAI_ROTATE_EXISTING_KEY=true.'
-    request POST "$SLAI_API_URL/v1/api-key/rotate" send "$user_cookie" '{}'
-  else
-    printf 'API key creation failed with HTTP %s. Set SLAI_ROTATE_EXISTING_KEY=true to rotate.\n' \
-      "$RESPONSE_CODE" >&2
-    sanitize_body "$RESPONSE_BODY" | jq . >&2 || true
+  if [[ "$HTTP_STATUS" != 2* ]]; then
+    printf '[%s] %s returned HTTP %s\n' "$SCRIPT_NAME" "$label" "$HTTP_STATUS" >&2
+    print_body_redacted "$HTTP_BODY" >&2
     exit 1
   fi
-fi
+}
 
-expect_2xx 'api key create/rotate'
-raw_api_key="$(printf '%s\n' "$RESPONSE_BODY" | jq -r '.raw_api_key')"
-api_key_id="$(printf '%s\n' "$RESPONSE_BODY" | jq -r '.api_key.id')"
-printf 'Created raw API key for this smoke run, shown once: %s\n' "$raw_api_key"
-printf 'SLAI api key id: %s\n' "$api_key_id"
+expect_status_or_continue() {
+  local label="$1"
+  local expected_prefix="$2"
 
-step 'Checking SLAI admin API key view'
-request GET "$SLAI_API_URL/v1/admin/users/$user_id/api-key" send "$admin_cookie" ''
-expect_2xx 'admin api key view'
-print_json
+  if [[ "$HTTP_STATUS" == "$expected_prefix"* ]]; then
+    return 0
+  fi
 
-step 'Calling OmniRoute /v1/chat/completions with the generated key'
-chat_payload="$(jq -n \
-  --arg model "$OMNIROUTE_MODEL" \
-  '{
-    model:$model,
-    messages:[
-      {
-        role:"user",
-        content:"Reply with one short sentence for a SLAI smoke test."
-      }
-    ],
-    max_tokens:32
-  }')"
-request POST "$OMNIROUTE_BASE_URL/v1/chat/completions" \
-  none '' "$chat_payload" \
-  "Authorization: Bearer $raw_api_key"
-expect_2xx 'OmniRoute chat completion'
-print_json
+  log "$label returned HTTP $HTTP_STATUS"
+  print_body_redacted "$HTTP_BODY"
+  return 1
+}
 
-step 'Triggering manual usage sync'
-request POST "$SLAI_API_URL/v1/admin/usage/sync" send "$admin_cookie" '{}'
-expect_2xx 'manual usage sync'
-print_json
+json_value() {
+  local query="$1"
+  local body="$2"
 
-step 'Checking user usage, balance, and ledger'
-request GET "$SLAI_API_URL/v1/usage?limit=10" send "$user_cookie" ''
-expect_2xx 'usage list'
-print_json
+  jq -r "$query" <<<"$body"
+}
 
-request GET "$SLAI_API_URL/v1/balance" send "$user_cookie" ''
-expect_2xx 'balance'
-print_json
+print_step_result() {
+  local label="$1"
 
-request GET "$SLAI_API_URL/v1/ledger" send "$user_cookie" ''
-expect_2xx 'ledger'
-print_json
+  log "$label"
+  print_body_redacted "$HTTP_BODY"
+}
 
-step 'Repeating sync to confirm idempotency'
-request POST "$SLAI_API_URL/v1/admin/usage/sync" send "$admin_cookie" '{}'
-expect_2xx 'duplicate usage sync'
-print_json
+check_health() {
+  log "checking SLAI health"
 
-if [[ "${SLAI_EXHAUST_BALANCE:-false}" == 'true' ]]; then
-  step "Generating additional usage to test suspension ($SLAI_EXHAUST_REQUESTS requests)"
+  local response
+  response="$(curl -sS "${SLAI_API_URL}/healthz")"
 
-  for _ in $(seq 1 "$SLAI_EXHAUST_REQUESTS"); do
-    request POST "$OMNIROUTE_BASE_URL/v1/chat/completions" \
-      none '' "$chat_payload" \
-      "Authorization: Bearer $raw_api_key"
-    expect_2xx 'OmniRoute exhaust request'
-  done
+  if [[ "$response" != $'OK\n' && "$response" != 'OK' ]]; then
+    fail "unexpected /healthz response: $(redact_text "$response")"
+  fi
 
-  step 'Syncing after additional usage'
-  request POST "$SLAI_API_URL/v1/admin/usage/sync" send "$admin_cookie" '{}'
-  expect_2xx 'post-exhaust usage sync'
-  print_json
+  log "SLAI health OK"
+}
 
-  step 'Checking key status after potential suspension'
-  request GET "$SLAI_API_URL/v1/admin/users/$user_id/api-key" send "$admin_cookie" ''
-  expect_2xx 'admin api key view after exhaust'
-  print_json
-fi
+check_readiness() {
+  log "checking SLAI readiness"
 
-step 'Checking usage sync status'
-request GET "$SLAI_API_URL/v1/admin/usage/sync-status" send "$admin_cookie" ''
-expect_2xx 'sync status'
-print_json
+  slai_json GET /readyz '' ''
+  expect_2xx 'SLAI readiness'
+  print_step_result 'SLAI ready'
+}
 
-step 'Smoke flow complete'
+login_admin() {
+  log "logging in as admin"
+
+  local body
+  body="$(make_json_login "$SLAI_ADMIN_EMAIL" "$SLAI_ADMIN_PASSWORD")"
+
+  slai_json POST /v1/auth/login "$ADMIN_COOKIES" "$body"
+  expect_2xx 'admin login'
+  print_step_result 'admin login succeeded'
+}
+
+signup_or_login_user() {
+  log "creating normal user, or logging in if it already exists"
+
+  local body
+  body="$(make_json_login "$SLAI_USER_EMAIL" "$SLAI_USER_PASSWORD")"
+
+  slai_json POST /v1/auth/signup "$USER_COOKIES" "$body"
+
+  if [[ "$HTTP_STATUS" == 2* ]]; then
+    print_step_result 'user signup succeeded'
+  else
+    log "signup did not succeed; trying login instead"
+    slai_json POST /v1/auth/login "$USER_COOKIES" "$body"
+    expect_2xx 'user login'
+    print_step_result 'user login succeeded'
+  fi
+
+  slai_json GET /v1/me "$USER_COOKIES" ''
+  expect_2xx 'user /v1/me'
+
+  SLAI_USER_ID="$(json_value '.user.id' "$HTTP_BODY")"
+
+  if [[ -z "$SLAI_USER_ID" || "$SLAI_USER_ID" == 'null' ]]; then
+    fail 'could not determine SLAI user ID'
+  fi
+
+  log "SLAI user ID: $SLAI_USER_ID"
+}
+
+create_package() {
+  log "creating smoke-test credit package"
+
+  local body
+  body="$(make_json_package)"
+
+  slai_json POST /v1/admin/packages "$ADMIN_COOKIES" "$body"
+  expect_2xx 'create package'
+
+  SLAI_PACKAGE_ID="$(json_value '.package.id' "$HTTP_BODY")"
+
+  if [[ -z "$SLAI_PACKAGE_ID" || "$SLAI_PACKAGE_ID" == 'null' ]]; then
+    fail 'could not determine package ID'
+  fi
+
+  print_step_result 'package created'
+  log "package ID: $SLAI_PACKAGE_ID"
+}
+
+top_up_user() {
+  log "manual top-up for smoke-test user"
+
+  local units="${SLAI_SMOKE_TOPUP_UNITS:-1000}"
+  local amount="${SLAI_SMOKE_TOPUP_MINOR:-1000}"
+  local idempotency_key="smoke-topup-$(date +%s)"
+  local body
+
+  body="$(make_json_topup "$SLAI_USER_ID" "$SLAI_PACKAGE_ID" "$amount" "$units")"
+
+  slai_json \
+    POST \
+    /v1/admin/payments/manual-topup \
+    "$ADMIN_COOKIES" \
+    "$body" \
+    "Idempotency-Key: $idempotency_key"
+
+  expect_2xx 'manual top-up'
+  print_step_result 'manual top-up succeeded'
+}
+
+create_or_rotate_api_key() {
+  log "creating user API key"
+
+  local body
+  body="$(make_json_key_create)"
+
+  slai_json POST /v1/api-key "$USER_COOKIES" "$body"
+
+  if [[ "$HTTP_STATUS" == 409 ]]; then
+    log "active key already exists; rotating to obtain a one-time raw key"
+    slai_json POST /v1/api-key/rotate "$USER_COOKIES" '{}'
+  fi
+
+  expect_2xx 'create or rotate API key'
+
+  RAW_API_KEY="$(json_value '.raw_api_key' "$HTTP_BODY")"
+  SLAI_API_KEY_ID="$(json_value '.api_key.id' "$HTTP_BODY")"
+
+  if [[ -z "$RAW_API_KEY" || "$RAW_API_KEY" == 'null' ]]; then
+    fail 'API create/rotate response did not include raw_api_key'
+  fi
+
+  if [[ -z "$SLAI_API_KEY_ID" || "$SLAI_API_KEY_ID" == 'null' ]]; then
+    fail 'API create/rotate response did not include api_key.id'
+  fi
+
+  log 'API key create/rotate response, with raw key redacted:'
+  print_body_redacted "$HTTP_BODY"
+
+  printf '[%s] Generated raw API key, shown once for local testing: %s\n' \
+    "$SCRIPT_NAME" \
+    "$RAW_API_KEY"
+
+  log "SLAI API key ID: $SLAI_API_KEY_ID"
+}
+
+confirm_key_metadata() {
+  log "confirming key metadata from user endpoint"
+
+  slai_json GET /v1/api-key "$USER_COOKIES" ''
+  expect_2xx 'user API key metadata'
+  print_step_result 'user API key metadata'
+
+  log "confirming key metadata from admin endpoint"
+
+  slai_json GET "/v1/admin/users/${SLAI_USER_ID}/api-key" "$ADMIN_COOKIES" ''
+  expect_2xx 'admin API key metadata'
+  print_step_result 'admin API key metadata'
+}
+
+optionally_list_omniroute_keys() {
+  if [[ -z "${OMNIROUTE_MANAGEMENT_TOKEN:-}" ]]; then
+    log 'OMNIROUTE_MANAGEMENT_TOKEN is not set; skipping direct OmniRoute key list'
+    return
+  fi
+
+  log "listing OmniRoute keys through management API"
+
+  omniroute_json \
+    GET \
+    /api/keys \
+    '' \
+    "Authorization: Bearer ${OMNIROUTE_MANAGEMENT_TOKEN}"
+
+  expect_2xx 'OmniRoute key list'
+  print_step_result 'OmniRoute key list, secrets redacted'
+}
+
+call_omniroute_chat() {
+  local message="$1"
+  local label="$2"
+  local body
+
+  body="$(make_json_chat "$message")"
+
+  log "$label"
+
+  omniroute_json \
+    POST \
+    /v1/chat/completions \
+    "$body" \
+    "Authorization: Bearer ${RAW_API_KEY}"
+
+  expect_2xx 'OmniRoute chat completion'
+  print_step_result 'OmniRoute chat response, secrets redacted'
+}
+
+sync_usage() {
+  local label="$1"
+
+  log "$label"
+
+  slai_json POST /v1/admin/usage/sync "$ADMIN_COOKIES" '{}'
+  expect_2xx 'manual usage sync'
+  print_step_result 'manual usage sync result'
+}
+
+show_usage_balance_and_ledger() {
+  log "listing user usage events"
+
+  slai_json GET '/v1/usage?limit=20' "$USER_COOKIES" ''
+  expect_2xx 'user usage list'
+  print_step_result 'user usage list'
+
+  log "showing user balance"
+
+  slai_json GET /v1/balance "$USER_COOKIES" ''
+  expect_2xx 'user balance'
+  print_step_result 'user balance'
+
+  log "showing user ledger"
+
+  slai_json GET '/v1/ledger?limit=20' "$USER_COOKIES" ''
+  expect_2xx 'user ledger'
+  print_step_result 'user ledger'
+}
+
+get_available_balance() {
+  slai_json GET /v1/balance "$USER_COOKIES" ''
+  expect_2xx 'user balance'
+  json_value '.balance.availableUnits' "$HTTP_BODY"
+}
+
+check_duplicate_sync() {
+  log "capturing balance before duplicate sync"
+
+  local before
+  local after
+  before="$(get_available_balance)"
+
+  sync_usage 'running duplicate sync check'
+
+  after="$(get_available_balance)"
+
+  log "balance before duplicate sync: $before"
+  log "balance after duplicate sync:  $after"
+
+  if [[ "$before" != "$after" ]]; then
+    log 'balance changed during duplicate sync; check whether worker or new logs ran concurrently'
+  else
+    log 'duplicate sync did not change balance'
+  fi
+}
+
+maybe_exhaust_balance() {
+  if [[ "${SLAI_SMOKE_EXHAUST:-false}" != 'true' ]]; then
+    log 'SLAI_SMOKE_EXHAUST is not true; skipping balance-exhaustion suspension test'
+    return
+  fi
+
+  log 'running optional balance-exhaustion suspension test'
+
+  local available
+  local delta
+  local body
+  local idempotency_key
+
+  available="$(get_available_balance)"
+
+  if [[ "$available" =~ ^-?[0-9]+$ && "$available" -gt 1 ]]; then
+    delta=$((1 - available))
+    idempotency_key="smoke-adjust-down-$(date +%s)"
+    body="$(make_json_adjustment \
+      "$SLAI_USER_ID" \
+      "$delta" \
+      'Prepare smoke test key suspension')"
+
+    slai_json \
+      POST \
+      /v1/admin/ledger/adjustments \
+      "$ADMIN_COOKIES" \
+      "$body" \
+      "Idempotency-Key: $idempotency_key"
+
+    expect_2xx 'admin adjustment before exhaustion'
+    print_step_result 'admin adjustment before exhaustion succeeded'
+  fi
+
+  call_omniroute_chat \
+    'Reply with a short sentence for the SLAI suspension smoke test.' \
+    'calling OmniRoute to exhaust remaining balance'
+
+  sync_usage 'syncing usage expected to suspend key'
+
+  slai_json GET "/v1/admin/users/${SLAI_USER_ID}/api-key" "$ADMIN_COOKIES" ''
+  expect_2xx 'admin key metadata after exhaustion'
+  print_step_result 'admin key metadata after exhaustion'
+
+  local status
+  status="$(json_value '.api_key.status' "$HTTP_BODY")"
+
+  if [[ "$status" != 'SUSPENDED' ]]; then
+    fail "expected API key status SUSPENDED after exhaustion, got: $status"
+  fi
+
+  log 'key suspension confirmed'
+}
+
+show_sync_status() {
+  log "checking usage sync status"
+
+  slai_json GET /v1/admin/usage/sync-status "$ADMIN_COOKIES" ''
+  expect_2xx 'sync status'
+  print_step_result 'usage sync status'
+}
+
+main() {
+  require_env SLAI_API_URL
+  require_env SLAI_ADMIN_EMAIL
+  require_env SLAI_ADMIN_PASSWORD
+  require_env SLAI_USER_EMAIL
+  require_env SLAI_USER_PASSWORD
+  require_env OMNIROUTE_BASE_URL
+
+  require_command curl
+  require_command jq
+  require_command sed
+
+  SLAI_API_URL="${SLAI_API_URL%/}"
+  OMNIROUTE_BASE_URL="${OMNIROUTE_BASE_URL%/}"
+  OMNIROUTE_SMOKE_MODEL="${OMNIROUTE_SMOKE_MODEL:-gpt-4o-mini}"
+
+  WORK_DIR="$(mktemp -d -t slai-smoke.XXXXXX)"
+  ADMIN_COOKIES="$WORK_DIR/admin.cookies"
+  USER_COOKIES="$WORK_DIR/user.cookies"
+
+  trap cleanup EXIT
+
+  log "using SLAI API URL: $SLAI_API_URL"
+  log "using OmniRoute URL: $OMNIROUTE_BASE_URL"
+  log "using OmniRoute model: $OMNIROUTE_SMOKE_MODEL"
+  log 'passwords and management tokens will not be printed'
+
+  check_health
+  check_readiness
+  login_admin
+  signup_or_login_user
+  create_package
+  top_up_user
+  create_or_rotate_api_key
+  confirm_key_metadata
+  optionally_list_omniroute_keys
+
+  call_omniroute_chat \
+    'Reply with the word SLAI.' \
+    'calling OmniRoute with the SLAI-created key'
+
+  sync_usage 'triggering manual usage sync'
+  show_usage_balance_and_ledger
+  check_duplicate_sync
+  maybe_exhaust_balance
+  show_sync_status
+
+  log 'smoke test completed'
+}
+
+main "$@"
