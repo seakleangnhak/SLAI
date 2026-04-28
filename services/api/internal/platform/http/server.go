@@ -21,6 +21,7 @@ import (
 	"github.com/slai/slai/services/api/internal/packages"
 	"github.com/slai/slai/services/api/internal/payments"
 	platformdb "github.com/slai/slai/services/api/internal/platform/db"
+	"github.com/slai/slai/services/api/internal/usage"
 	"github.com/slai/slai/services/api/internal/users"
 )
 
@@ -47,6 +48,7 @@ type Server struct {
 	paymentService   payments.Service
 	adminService     admin.Service
 	apiKeyService    apikeys.Service
+	usageService     usage.Service
 }
 
 func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Server {
@@ -55,6 +57,12 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 	if omniRouteClient == nil {
 		omniRouteClient = omniroute.NewStubClient(cfg.OmniRoute, logger)
 	}
+	apiKeyService := apikeys.NewService(pool, apikeys.Config{
+		Pepper:           cfg.APIKeyPepper,
+		Prefix:           cfg.APIKeyPrefix,
+		OmniRouteEnabled: cfg.OmniRoute.Enabled,
+	}, omniRouteClient, logger)
+
 	server := &Server{
 		db:               pool,
 		log:              logger,
@@ -64,11 +72,8 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 		authService:      auth.NewService(pool, sessions),
 		paymentService:   payments.NewService(pool),
 		adminService:     admin.NewService(pool),
-		apiKeyService: apikeys.NewService(pool, apikeys.Config{
-			Pepper:           cfg.APIKeyPepper,
-			Prefix:           cfg.APIKeyPrefix,
-			OmniRouteEnabled: cfg.OmniRoute.Enabled,
-		}, omniRouteClient, logger),
+		apiKeyService:    apiKeyService,
+		usageService:     usage.NewService(pool, omniRouteClient, cfg.OmniRoute, logger),
 	}
 
 	mux := http.NewServeMux()
@@ -82,6 +87,7 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 	mux.HandleFunc("GET /v1/packages", server.listPublicPackages)
 	mux.HandleFunc("GET /v1/balance", server.balance)
 	mux.HandleFunc("GET /v1/ledger", server.ledgerEntries)
+	mux.HandleFunc("GET /v1/usage", server.listUsage)
 	mux.HandleFunc("GET /v1/api-key", server.getAPIKey)
 	mux.HandleFunc("POST /v1/api-key", server.createAPIKey)
 	mux.HandleFunc("POST /v1/api-key/rotate", server.rotateAPIKey)
@@ -91,6 +97,9 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 	mux.HandleFunc("PATCH /v1/admin/packages/{id}", server.adminUpdatePackage)
 	mux.HandleFunc("POST /v1/admin/payments/manual-topup", server.adminManualTopUp)
 	mux.HandleFunc("POST /v1/admin/ledger/adjustments", server.adminLedgerAdjustment)
+	mux.HandleFunc("POST /v1/internal/usage/mock-event", server.ingestMockUsageEvent)
+	mux.HandleFunc("POST /v1/admin/usage/sync", server.adminSyncUsage)
+	mux.HandleFunc("GET /v1/admin/usage", server.adminListUsage)
 	mux.HandleFunc("GET /v1/admin/users/{id}/api-key", server.adminGetUserAPIKey)
 	mux.HandleFunc("POST /v1/admin/users/{id}/api-key/suspend", server.adminSuspendUserAPIKey)
 	mux.HandleFunc("POST /v1/admin/users/{id}/api-key/resume", server.adminResumeUserAPIKey)
@@ -237,6 +246,109 @@ func (s *Server) ledgerEntries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ledger": entries})
+}
+
+func (s *Server) listUsage(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+
+	filter := usage.ListFilter{
+		UserID: &user.ID,
+		Limit:  queryLimit(r, 50),
+		Offset: queryOffset(r),
+	}
+	events, err := s.usageService.ListEvents(r.Context(), filter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "usage_failed", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"usage": events})
+}
+
+func (s *Server) ingestMockUsageEvent(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+
+	var req struct {
+		APIKeyID        string     `json:"api_key_id"`
+		ExternalEventID string     `json:"external_event_id"`
+		Model           string     `json:"model"`
+		Provider        string     `json:"provider"`
+		InputTokens     int64      `json:"input_tokens"`
+		OutputTokens    int64      `json:"output_tokens"`
+		OccurredAt      *time.Time `json:"occurred_at"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	occurredAt := time.Now().UTC()
+	if req.OccurredAt != nil {
+		occurredAt = req.OccurredAt.UTC()
+	}
+	input := usage.IngestInput{
+		ExternalEventID: strings.TrimSpace(req.ExternalEventID),
+		APIKeyID:        optionalString(req.APIKeyID),
+		Model:           optionalString(req.Model),
+		Provider:        optionalString(req.Provider),
+		InputTokens:     req.InputTokens,
+		OutputTokens:    req.OutputTokens,
+		OccurredAt:      occurredAt,
+		Raw: map[string]any{
+			"api_key_id":        req.APIKeyID,
+			"external_event_id": req.ExternalEventID,
+			"model":             req.Model,
+			"provider":          req.Provider,
+			"input_tokens":      req.InputTokens,
+			"output_tokens":     req.OutputTokens,
+			"occurred_at":       occurredAt.Format(time.RFC3339),
+		},
+	}
+
+	result, err := s.usageService.IngestMockEvent(r.Context(), input)
+	if err != nil {
+		writeUsageError(w, err)
+		return
+	}
+	status := http.StatusCreated
+	if result.Duplicate || result.Ignored {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, result)
+}
+
+func (s *Server) adminSyncUsage(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+
+	result, err := s.usageService.SyncOmniRoute(r.Context(), queryLimit(r, 100))
+	if err != nil {
+		writeUsageError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sync": result})
+}
+
+func (s *Server) adminListUsage(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+
+	filter, err := usageFilterFromRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_usage_filter", err)
+		return
+	}
+	events, err := s.usageService.ListEvents(r.Context(), filter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "usage_failed", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"usage": events})
 }
 
 func (s *Server) getAPIKey(w http.ResponseWriter, r *http.Request) {
@@ -570,6 +682,67 @@ func queryLimit(r *http.Request, fallback int) int {
 		return fallback
 	}
 	return limit
+}
+
+func queryOffset(r *http.Request) int {
+	offsetRaw := r.URL.Query().Get("offset")
+	if offsetRaw == "" {
+		return 0
+	}
+	offset, err := strconv.Atoi(offsetRaw)
+	if err != nil || offset < 0 {
+		return 0
+	}
+	return offset
+}
+
+func optionalString(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+func usageFilterFromRequest(r *http.Request) (usage.ListFilter, error) {
+	query := r.URL.Query()
+	filter := usage.ListFilter{
+		UserID:   optionalString(query.Get("user_id")),
+		APIKeyID: optionalString(query.Get("api_key_id")),
+		Model:    optionalString(query.Get("model")),
+		Provider: optionalString(query.Get("provider")),
+		Status:   optionalString(query.Get("status")),
+		Limit:    queryLimit(r, 50),
+		Offset:   queryOffset(r),
+	}
+	if from := strings.TrimSpace(query.Get("from")); from != "" {
+		parsed, err := time.Parse(time.RFC3339, from)
+		if err != nil {
+			return usage.ListFilter{}, err
+		}
+		filter.StartTime = &parsed
+	}
+	if to := strings.TrimSpace(query.Get("to")); to != "" {
+		parsed, err := time.Parse(time.RFC3339, to)
+		if err != nil {
+			return usage.ListFilter{}, err
+		}
+		filter.EndTime = &parsed
+	}
+	return filter, nil
+}
+
+func writeUsageError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, usage.ErrInvalidUsageEvent):
+		writeError(w, http.StatusBadRequest, "invalid_usage_event", err)
+	case errors.Is(err, usage.ErrPricingRuleNotFound):
+		writeError(w, http.StatusBadRequest, "pricing_rule_not_found", err)
+	case errors.Is(err, usage.ErrSyncNotImplemented):
+		writeError(w, http.StatusNotImplemented, "omniroute_sync_not_implemented", err)
+	default:
+		writeError(w, http.StatusInternalServerError, "usage_failed", err)
+	}
 }
 
 func applyIdempotencyHeader(r *http.Request, dst **string) {

@@ -203,6 +203,20 @@ CREATE TRIGGER pricing_rules_set_updated_at
 BEFORE UPDATE ON pricing_rules
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+INSERT INTO pricing_rules (
+    provider,
+    model,
+    input_cost_units_per_1k,
+    output_cost_units_per_1k,
+    active
+) VALUES (
+    NULL,
+    NULL,
+    1,
+    1,
+    true
+);
+
 CREATE TABLE admin_audit_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     admin_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,

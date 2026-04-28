@@ -300,6 +300,58 @@ func TestAPIKeyGETDoesNotReturnRawKey(t *testing.T) {
 	}
 }
 
+func TestMockUsageEndpointAndUsageListDoNotExposeRawKey(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	client := newTestClient(t)
+	adminUser := createUser(t, "admin@example.com", users.RoleAdmin)
+	user := createUser(t, "user@example.com", users.RoleUser)
+	adminCookies := loginCookies(t, client, adminUser.Email)
+	userCookies := loginCookies(t, client, user.Email)
+
+	created := client.post(t, "/v1/api-key", map[string]any{"name": "Default"}, userCookies)
+	assertStatus(t, created, http.StatusCreated)
+	raw := stringField(t, created.JSON, "raw_api_key")
+	keyID := stringField(t, created.JSON, "api_key.id")
+
+	ingested := client.post(t, "/v1/internal/usage/mock-event", map[string]any{
+		"api_key_id":        keyID,
+		"external_event_id": "mock-http-001",
+		"model":             "gpt-5.5",
+		"provider":          "openai",
+		"input_tokens":      1001,
+		"output_tokens":     1,
+		"occurred_at":       "2026-04-28T10:00:00Z",
+	}, adminCookies)
+	assertStatus(t, ingested, http.StatusCreated)
+	if got := stringField(t, ingested.JSON, "status"); got != "billed" {
+		t.Fatalf("ingest status = %q", got)
+	}
+
+	usageList := client.get(t, "/v1/usage", userCookies)
+	assertStatus(t, usageList, http.StatusOK)
+	if strings.Contains(usageList.Body, raw) || strings.Contains(usageList.Body, "raw_api_key") || strings.Contains(usageList.Body, "key_hash") {
+		t.Fatalf("usage list leaked raw key or hash: %s", usageList.Body)
+	}
+
+	adminList := client.get(t, "/v1/admin/usage?user_id="+user.ID, adminCookies)
+	assertStatus(t, adminList, http.StatusOK)
+	if strings.Contains(adminList.Body, raw) || strings.Contains(adminList.Body, "raw_api_key") || strings.Contains(adminList.Body, "key_hash") {
+		t.Fatalf("admin usage list leaked raw key or hash: %s", adminList.Body)
+	}
+}
+
+func TestAdminUsageSyncStubReturns501(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	client := newTestClient(t)
+	adminUser := createUser(t, "admin@example.com", users.RoleAdmin)
+	adminCookies := loginCookies(t, client, adminUser.Email)
+
+	response := client.post(t, "/v1/admin/usage/sync", map[string]any{}, adminCookies)
+	assertStatus(t, response, http.StatusNotImplemented)
+}
+
 type testClient struct {
 	server *httptest.Server
 	client *http.Client
