@@ -71,7 +71,9 @@ CREATE TABLE payments (
 
 CREATE INDEX payments_user_id_idx ON payments(user_id);
 CREATE INDEX payments_admin_id_idx ON payments(admin_id);
-CREATE UNIQUE INDEX payments_provider_ref_unique_idx ON payments(provider, provider_ref) WHERE provider_ref IS NOT NULL;
+CREATE UNIQUE INDEX payments_provider_ref_unique_idx
+ON payments(provider, provider_ref)
+WHERE provider_ref IS NOT NULL;
 
 CREATE TABLE credit_balances (
     user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -146,7 +148,9 @@ CREATE TABLE api_keys (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX api_keys_one_active_per_user_idx ON api_keys(user_id) WHERE status = 'ACTIVE';
+CREATE UNIQUE INDEX api_keys_one_active_per_user_idx
+ON api_keys(user_id)
+WHERE status = 'ACTIVE';
 CREATE INDEX api_keys_user_id_idx ON api_keys(user_id);
 CREATE INDEX api_keys_key_hash_idx ON api_keys(key_hash);
 CREATE INDEX api_keys_omniroute_key_id_idx ON api_keys(omniroute_key_id);
@@ -191,7 +195,9 @@ CREATE TABLE pricing_rules (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX pricing_rules_lookup_idx ON pricing_rules(provider, model) WHERE active = true;
+CREATE INDEX pricing_rules_lookup_idx
+ON pricing_rules(provider, model)
+WHERE active = true;
 
 CREATE TRIGGER pricing_rules_set_updated_at
 BEFORE UPDATE ON pricing_rules
@@ -225,4 +231,6 @@ FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 ALTER TABLE credit_ledger_entries
 ADD CONSTRAINT credit_ledger_entries_usage_event_id_fkey
-FOREIGN KEY (usage_event_id) REFERENCES usage_events(id) ON DELETE SET NULL;
+FOREIGN KEY (usage_event_id)
+REFERENCES usage_events(id)
+ON DELETE SET NULL;

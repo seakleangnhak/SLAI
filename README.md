@@ -56,6 +56,8 @@ API variables live in `services/api/.env.example`:
 - `SESSION_SECRET`
 - `COOKIE_SECURE`
 - `SESSION_TTL`
+- `API_KEY_PEPPER`
+- `API_KEY_PREFIX`
 - `ADMIN_SEED_EMAIL`
 - `ADMIN_SEED_PASSWORD`
 - `READINESS_TIMEOUT`
@@ -85,6 +87,9 @@ Implemented now:
 - Admin package create/list/update endpoints
 - Manual admin top-up flow with payment row, ledger row, balance update, idempotency key, and audit log
 - Admin credit adjustment flow with required reason, ledger row, balance update, idempotency key, and audit log
+- API key creation, rotation, revocation, suspension, and balance-gated resume
+- API key storage with hash plus display prefix only; raw keys are returned once on create/rotate
+- OmniRoute-backed key creation hooks when enabled, with local/dev key generation when disabled
 - Database guard preventing direct `credit_balances` mutation outside the ledger service transaction path
 - Admin seed command: `slai-api seed-admin`
 - OmniRoute client interface and stub client
@@ -94,7 +99,6 @@ Implemented now:
 Not implemented yet:
 
 - Stripe or external payments
-- API key creation
 - OmniRoute usage ingestion
 - Real OmniRoute management API calls
 
@@ -107,11 +111,31 @@ Not implemented yet:
 - `GET /v1/packages`
 - `GET /v1/balance`
 - `GET /v1/ledger`
+- `GET /v1/api-key`
+- `POST /v1/api-key`
+- `POST /v1/api-key/rotate`
+- `DELETE /v1/api-key`
 - `GET /v1/admin/packages`
 - `POST /v1/admin/packages`
 - `PATCH /v1/admin/packages/{id}`
 - `POST /v1/admin/payments/manual-topup`
 - `POST /v1/admin/ledger/adjustments`
+- `GET /v1/admin/users/{id}/api-key`
+- `POST /v1/admin/users/{id}/api-key/suspend`
+- `POST /v1/admin/users/{id}/api-key/resume`
+- `POST /v1/admin/users/{id}/api-key/revoke`
+
+## API Key Lifecycle
+
+For MVP, each user can have one `ACTIVE` API key. The database supports more keys later, but the service and partial unique index enforce the MVP rule now.
+
+- Create: returns the raw API key once and stores only `key_hash` plus `key_prefix`.
+- Rotate: revokes the current active/suspended key, creates a new key, and returns the new raw key once.
+- Revoke: marks the local key `REVOKED`, sets `revoked_at`, and deletes/disables the OmniRoute key when enabled.
+- Suspend: marks the local key `SUSPENDED` and sends an inactive update to OmniRoute when enabled.
+- Resume: only succeeds when the user balance is greater than zero, then marks the key `ACTIVE` and sends an active update to OmniRoute when enabled.
+
+When `OMNIROUTE_ENABLED=false`, SLAI runs in local/dev mode and generates a local `API_KEY_PREFIX` key such as `sk_slai_...`. No OmniRoute key id is stored. When `OMNIROUTE_ENABLED=true`, SLAI calls OmniRoute `CreateAPIKey` and uses the raw key returned by OmniRoute as the user-visible key.
 
 ## OmniRoute Requirement
 

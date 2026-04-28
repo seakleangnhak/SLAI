@@ -29,8 +29,9 @@ type APIKey struct {
 }
 
 type UpdateAPIKeyPayload struct {
-	Name   *string
-	Status *string
+	Name     *string
+	Status   *string
+	IsActive *bool
 }
 
 type CallLog struct {

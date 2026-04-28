@@ -279,6 +279,27 @@ func TestLedgerServiceMutation(t *testing.T) {
 	assertBalance(t, user.ID, 500)
 }
 
+func TestAPIKeyGETDoesNotReturnRawKey(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	client := newTestClient(t)
+	user := createUser(t, "user@example.com", users.RoleUser)
+	cookies := loginCookies(t, client, user.Email)
+
+	created := client.post(t, "/v1/api-key", map[string]any{"name": "Default"}, cookies)
+	assertStatus(t, created, http.StatusCreated)
+	raw := stringField(t, created.JSON, "raw_api_key")
+	if raw == "" {
+		t.Fatal("create did not return raw api key")
+	}
+
+	get := client.get(t, "/v1/api-key", cookies)
+	assertStatus(t, get, http.StatusOK)
+	if strings.Contains(get.Body, raw) || strings.Contains(get.Body, "raw_api_key") || strings.Contains(get.Body, "key_hash") {
+		t.Fatalf("GET leaked raw key or hash: %s", get.Body)
+	}
+}
+
 type testClient struct {
 	server *httptest.Server
 	client *http.Client
@@ -299,6 +320,8 @@ func newTestClient(t *testing.T) testClient {
 		SessionSecret:    "test-secret",
 		CookieSecure:     false,
 		SessionTTL:       time.Hour,
+		APIKeyPepper:     "test-api-key-pepper",
+		APIKeyPrefix:     "sk_slai",
 	}, testDB, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	return testClient{

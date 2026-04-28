@@ -16,6 +16,8 @@ type Config struct {
 	SessionSecret     string
 	CookieSecure      bool
 	SessionTTL        time.Duration
+	APIKeyPepper      string
+	APIKeyPrefix      string
 	AdminSeedEmail    string
 	AdminSeedPassword string
 	ReadinessTimeout  time.Duration
@@ -65,6 +67,8 @@ func Load() (Config, error) {
 		SessionSecret:     stringFromEnv("SESSION_SECRET", "dev-only-change-me"),
 		CookieSecure:      cookieSecure,
 		SessionTTL:        sessionTTL,
+		APIKeyPepper:      stringFromEnv("API_KEY_PEPPER", "dev-only-change-me-api-key-pepper"),
+		APIKeyPrefix:      stringFromEnv("API_KEY_PREFIX", "sk_slai"),
 		AdminSeedEmail:    stringFromEnv("ADMIN_SEED_EMAIL", ""),
 		AdminSeedPassword: stringFromEnv("ADMIN_SEED_PASSWORD", ""),
 		ReadinessTimeout:  readinessTimeout,

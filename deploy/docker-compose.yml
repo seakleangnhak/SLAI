@@ -27,6 +27,8 @@ services:
       SESSION_SECRET: dev-only-change-me
       COOKIE_SECURE: "false"
       SESSION_TTL: 168h
+      API_KEY_PEPPER: dev-only-change-me-api-key-pepper
+      API_KEY_PREFIX: sk_slai
       OMNIROUTE_ENABLED: "false"
       OMNIROUTE_BASE_URL: http://omniroute:4000
       OMNIROUTE_MANAGEMENT_TOKEN: ""
@@ -50,6 +52,8 @@ services:
       SESSION_SECRET: dev-only-change-me
       COOKIE_SECURE: "false"
       SESSION_TTL: 168h
+      API_KEY_PEPPER: dev-only-change-me-api-key-pepper
+      API_KEY_PREFIX: sk_slai
       ADMIN_SEED_EMAIL: admin@example.com
       ADMIN_SEED_PASSWORD: change-me-admin-password
       READINESS_TIMEOUT: 2s

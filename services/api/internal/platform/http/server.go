@@ -3,6 +3,7 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -12,8 +13,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/slai/slai/services/api/internal/admin"
+	"github.com/slai/slai/services/api/internal/apikeys"
 	"github.com/slai/slai/services/api/internal/auth"
+	"github.com/slai/slai/services/api/internal/config"
 	"github.com/slai/slai/services/api/internal/ledger"
+	"github.com/slai/slai/services/api/internal/omniroute"
 	"github.com/slai/slai/services/api/internal/packages"
 	"github.com/slai/slai/services/api/internal/payments"
 	platformdb "github.com/slai/slai/services/api/internal/platform/db"
@@ -26,6 +30,10 @@ type ServerConfig struct {
 	SessionSecret    string
 	CookieSecure     bool
 	SessionTTL       time.Duration
+	APIKeyPepper     string
+	APIKeyPrefix     string
+	OmniRoute        config.OmniRouteConfig
+	OmniRouteClient  omniroute.Client
 }
 
 type Server struct {
@@ -38,10 +46,15 @@ type Server struct {
 	authService      auth.Service
 	paymentService   payments.Service
 	adminService     admin.Service
+	apiKeyService    apikeys.Service
 }
 
 func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Server {
 	sessions := auth.NewSessionManager(pool, cfg.SessionSecret, cfg.CookieSecure, cfg.SessionTTL)
+	omniRouteClient := cfg.OmniRouteClient
+	if omniRouteClient == nil {
+		omniRouteClient = omniroute.NewStubClient(cfg.OmniRoute, logger)
+	}
 	server := &Server{
 		db:               pool,
 		log:              logger,
@@ -51,6 +64,11 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 		authService:      auth.NewService(pool, sessions),
 		paymentService:   payments.NewService(pool),
 		adminService:     admin.NewService(pool),
+		apiKeyService: apikeys.NewService(pool, apikeys.Config{
+			Pepper:           cfg.APIKeyPepper,
+			Prefix:           cfg.APIKeyPrefix,
+			OmniRouteEnabled: cfg.OmniRoute.Enabled,
+		}, omniRouteClient, logger),
 	}
 
 	mux := http.NewServeMux()
@@ -64,11 +82,19 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 	mux.HandleFunc("GET /v1/packages", server.listPublicPackages)
 	mux.HandleFunc("GET /v1/balance", server.balance)
 	mux.HandleFunc("GET /v1/ledger", server.ledgerEntries)
+	mux.HandleFunc("GET /v1/api-key", server.getAPIKey)
+	mux.HandleFunc("POST /v1/api-key", server.createAPIKey)
+	mux.HandleFunc("POST /v1/api-key/rotate", server.rotateAPIKey)
+	mux.HandleFunc("DELETE /v1/api-key", server.revokeAPIKey)
 	mux.HandleFunc("GET /v1/admin/packages", server.adminListPackages)
 	mux.HandleFunc("POST /v1/admin/packages", server.adminCreatePackage)
 	mux.HandleFunc("PATCH /v1/admin/packages/{id}", server.adminUpdatePackage)
 	mux.HandleFunc("POST /v1/admin/payments/manual-topup", server.adminManualTopUp)
 	mux.HandleFunc("POST /v1/admin/ledger/adjustments", server.adminLedgerAdjustment)
+	mux.HandleFunc("GET /v1/admin/users/{id}/api-key", server.adminGetUserAPIKey)
+	mux.HandleFunc("POST /v1/admin/users/{id}/api-key/suspend", server.adminSuspendUserAPIKey)
+	mux.HandleFunc("POST /v1/admin/users/{id}/api-key/resume", server.adminResumeUserAPIKey)
+	mux.HandleFunc("POST /v1/admin/users/{id}/api-key/revoke", server.adminRevokeUserAPIKey)
 
 	server.server = &http.Server{
 		Addr:              cfg.Addr,
@@ -213,6 +239,68 @@ func (s *Server) ledgerEntries(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ledger": entries})
 }
 
+func (s *Server) getAPIKey(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	key, err := s.apiKeyService.GetCurrentAPIKey(r.Context(), user.ID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, apikeys.ErrNotFound) {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, "api_key_not_found", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"api_key": key.Public(s.apiKeyService.LocalDevMode())})
+}
+
+func (s *Server) createAPIKey(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	created, err := s.apiKeyService.CreateAPIKey(r.Context(), user.ID, req.Name)
+	if err != nil {
+		writeAPIKeyError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, created)
+}
+
+func (s *Server) rotateAPIKey(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	created, err := s.apiKeyService.RotateAPIKey(r.Context(), user.ID)
+	if err != nil {
+		writeAPIKeyError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, created)
+}
+
+func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	key, err := s.apiKeyService.RevokeAPIKey(r.Context(), user.ID)
+	if err != nil {
+		writeAPIKeyError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"api_key": key.Public(s.apiKeyService.LocalDevMode())})
+}
+
 func (s *Server) adminListPackages(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireAdmin(w, r); !ok {
 		return
@@ -333,6 +421,79 @@ func (s *Server) adminLedgerAdjustment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, result)
 }
 
+func (s *Server) adminGetUserAPIKey(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	key, err := s.apiKeyService.GetLatestAPIKey(r.Context(), r.PathValue("id"))
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, apikeys.ErrNotFound) {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, "api_key_not_found", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"api_key": key.Admin()})
+}
+
+func (s *Server) adminSuspendUserAPIKey(w http.ResponseWriter, r *http.Request) {
+	adminUser, ok := s.requireAdmin(w, r)
+	if !ok {
+		return
+	}
+	key, err := s.apiKeyService.SuspendAPIKey(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeAPIKeyError(w, err)
+		return
+	}
+	if err := s.logAdminAPIKeyAction(r.Context(), adminUser.ID, "api_key_suspended", r.PathValue("id"), key.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit_log_failed", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"api_key": key.Admin()})
+}
+
+func (s *Server) adminResumeUserAPIKey(w http.ResponseWriter, r *http.Request) {
+	adminUser, ok := s.requireAdmin(w, r)
+	if !ok {
+		return
+	}
+	key, err := s.apiKeyService.ResumeAPIKey(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeAPIKeyError(w, err)
+		return
+	}
+	if err := s.logAdminAPIKeyAction(r.Context(), adminUser.ID, "api_key_resumed", r.PathValue("id"), key.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit_log_failed", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"api_key": key.Admin()})
+}
+
+func (s *Server) adminRevokeUserAPIKey(w http.ResponseWriter, r *http.Request) {
+	adminUser, ok := s.requireAdmin(w, r)
+	if !ok {
+		return
+	}
+	key, err := s.apiKeyService.RevokeAPIKey(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeAPIKeyError(w, err)
+		return
+	}
+	if err := s.logAdminAPIKeyAction(r.Context(), adminUser.ID, "api_key_revoked", r.PathValue("id"), key.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "audit_log_failed", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"api_key": key.Admin()})
+}
+
+func (s *Server) logAdminAPIKeyAction(ctx context.Context, adminID, action, userID, keyID string) error {
+	targetType := "api_key"
+	targetID := keyID
+	return admin.NewAuditLogger(s.db).Log(ctx, adminID, action, &targetType, &targetID, map[string]any{"userId": userID})
+}
+
 func (s *Server) requireUser(w http.ResponseWriter, r *http.Request) (users.User, bool) {
 	cookie, err := r.Cookie(auth.SessionCookieName)
 	if err != nil || cookie.Value == "" {
@@ -382,6 +543,21 @@ func writeError(w http.ResponseWriter, status int, code string, err error) {
 		payload["message"] = err.Error()
 	}
 	writeJSON(w, status, payload)
+}
+
+func writeAPIKeyError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, apikeys.ErrNotFound):
+		writeError(w, http.StatusNotFound, "api_key_not_found", err)
+	case errors.Is(err, apikeys.ErrActiveKeyExists):
+		writeError(w, http.StatusConflict, "active_api_key_exists", err)
+	case errors.Is(err, apikeys.ErrInvalidName):
+		writeError(w, http.StatusBadRequest, "invalid_api_key_name", err)
+	case errors.Is(err, apikeys.ErrInsufficientBalance):
+		writeError(w, http.StatusBadRequest, "insufficient_balance", err)
+	default:
+		writeError(w, http.StatusInternalServerError, "api_key_failed", err)
+	}
 }
 
 func queryLimit(r *http.Request, fallback int) int {
