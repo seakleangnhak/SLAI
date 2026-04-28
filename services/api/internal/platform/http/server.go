@@ -35,21 +35,25 @@ type ServerConfig struct {
 	APIKeyPrefix     string
 	OmniRoute        config.OmniRouteConfig
 	OmniRouteClient  omniroute.Client
+	UsageSyncWorker  config.UsageSyncWorkerConfig
 }
 
 type Server struct {
-	server           *http.Server
-	db               *pgxpool.Pool
-	log              *slog.Logger
-	readinessTimeout time.Duration
-	sessionTTL       time.Duration
-	sessions         auth.SessionManager
-	authService      auth.Service
-	paymentService   payments.Service
-	adminService     admin.Service
-	apiKeyService    apikeys.Service
-	usageService     usage.Service
-	omniRouteCfg     config.OmniRouteConfig
+	server            *http.Server
+	db                *pgxpool.Pool
+	log               *slog.Logger
+	readinessTimeout  time.Duration
+	sessionTTL        time.Duration
+	sessions          auth.SessionManager
+	authService       auth.Service
+	paymentService    payments.Service
+	adminService      admin.Service
+	apiKeyService     apikeys.Service
+	usageService      usage.Service
+	usageSyncCfg      config.UsageSyncWorkerConfig
+	usageSyncExecutor *usage.SyncExecutor
+	usageSyncStatus   *usage.SyncStatusTracker
+	usageSyncWorker   *usage.SyncWorker
 }
 
 func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Server {
@@ -63,19 +67,32 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 		Prefix:           cfg.APIKeyPrefix,
 		OmniRouteEnabled: cfg.OmniRoute.Enabled,
 	}, omniRouteClient, logger)
+	usageService := usage.NewService(pool, omniRouteClient, cfg.OmniRoute, logger)
+	usageSyncStatus := usage.NewSyncStatusTracker(cfg.UsageSyncWorker.Enabled)
+	usageSyncExecutor := usage.NewSyncExecutor(
+		usageService,
+		usage.PostgresAdvisoryLocker{Pool: pool},
+		cfg.UsageSyncWorker,
+		usageSyncStatus,
+		logger,
+	)
+	usageSyncWorker := usage.NewSyncWorker(cfg.UsageSyncWorker, cfg.OmniRoute.Enabled, usageSyncExecutor, usageSyncStatus, logger)
 
 	server := &Server{
-		db:               pool,
-		log:              logger,
-		readinessTimeout: cfg.ReadinessTimeout,
-		sessionTTL:       cfg.SessionTTL,
-		sessions:         sessions,
-		authService:      auth.NewService(pool, sessions),
-		paymentService:   payments.NewService(pool),
-		adminService:     admin.NewService(pool),
-		apiKeyService:    apiKeyService,
-		usageService:     usage.NewService(pool, omniRouteClient, cfg.OmniRoute, logger),
-		omniRouteCfg:     cfg.OmniRoute,
+		db:                pool,
+		log:               logger,
+		readinessTimeout:  cfg.ReadinessTimeout,
+		sessionTTL:        cfg.SessionTTL,
+		sessions:          sessions,
+		authService:       auth.NewService(pool, sessions),
+		paymentService:    payments.NewService(pool),
+		adminService:      admin.NewService(pool),
+		apiKeyService:     apiKeyService,
+		usageService:      usageService,
+		usageSyncCfg:      cfg.UsageSyncWorker,
+		usageSyncExecutor: usageSyncExecutor,
+		usageSyncStatus:   usageSyncStatus,
+		usageSyncWorker:   usageSyncWorker,
 	}
 
 	mux := http.NewServeMux()
@@ -101,6 +118,7 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 	mux.HandleFunc("POST /v1/admin/ledger/adjustments", server.adminLedgerAdjustment)
 	mux.HandleFunc("POST /v1/internal/usage/mock-event", server.ingestMockUsageEvent)
 	mux.HandleFunc("POST /v1/admin/usage/sync", server.adminSyncUsage)
+	mux.HandleFunc("GET /v1/admin/usage/sync-status", server.adminUsageSyncStatus)
 	mux.HandleFunc("GET /v1/admin/usage", server.adminListUsage)
 	mux.HandleFunc("GET /v1/admin/users/{id}/api-key", server.adminGetUserAPIKey)
 	mux.HandleFunc("POST /v1/admin/users/{id}/api-key/suspend", server.adminSuspendUserAPIKey)
@@ -120,7 +138,17 @@ func (s *Server) ListenAndServe() error {
 	return s.server.ListenAndServe()
 }
 
+func (s *Server) StartUsageSyncWorker(ctx context.Context) bool {
+	if s == nil || s.usageSyncWorker == nil {
+		return false
+	}
+	return s.usageSyncWorker.Start(ctx)
+}
+
 func (s *Server) Shutdown(ctx context.Context) error {
+	if s.usageSyncWorker != nil {
+		s.usageSyncWorker.Stop(ctx)
+	}
 	return s.server.Shutdown(ctx)
 }
 
@@ -327,12 +355,20 @@ func (s *Server) adminSyncUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.usageService.SyncOmniRoute(r.Context(), queryLimit(r, s.omniRouteCfg.CallLogLimit))
+	limit := queryLimit(r, s.usageSyncCfg.BatchLimit)
+	result, err := s.usageSyncExecutor.RunWithLimit(r.Context(), limit)
 	if err != nil {
 		writeUsageError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sync": result})
+}
+
+func (s *Server) adminUsageSyncStatus(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sync_status": s.usageSyncStatus.Snapshot()})
 }
 
 func (s *Server) adminListUsage(w http.ResponseWriter, r *http.Request) {
@@ -742,6 +778,10 @@ func writeUsageError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "pricing_rule_not_found", err)
 	case errors.Is(err, usage.ErrSyncNotImplemented):
 		writeError(w, http.StatusNotImplemented, "omniroute_sync_not_implemented", err)
+	case errors.Is(err, usage.ErrSyncLockHeld):
+		writeError(w, http.StatusConflict, "usage_sync_lock_held", err)
+	case errors.Is(err, usage.ErrSyncAlreadyRunning):
+		writeError(w, http.StatusConflict, "usage_sync_already_running", err)
 	default:
 		writeError(w, http.StatusInternalServerError, "usage_failed", err)
 	}

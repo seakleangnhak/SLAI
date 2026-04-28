@@ -272,7 +272,7 @@ func TestRealOmniRouteClientBillingFlowWithFakeServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Billed != 1 || result.Processed != 1 {
+	if result.Billed != 1 || result.Fetched != 1 {
 		t.Fatalf("sync result = %#v", result)
 	}
 	assertBalanceAndLifetimeUsed(t, user.ID, -1, 2)
@@ -285,13 +285,45 @@ func TestRealOmniRouteClientBillingFlowWithFakeServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replay.Duplicates != 1 || replay.Billed != 0 {
+	if replay.Duplicate != 1 || replay.Billed != 0 {
 		t.Fatalf("replay result = %#v", replay)
 	}
 	assertBalanceAndLifetimeUsed(t, user.ID, -1, 2)
 	if fake.patchInactiveCalls != 1 {
 		t.Fatalf("duplicate sync patched key again: %d", fake.patchInactiveCalls)
 	}
+}
+
+func TestPostgresAdvisoryLockPreventsConcurrentAcquisition(t *testing.T) {
+	requireDB(t)
+	acquired, release, err := platformdb.TryAcquireAdvisoryLock(context.Background(), testDB, "test_usage_sync_multi_replica")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !acquired {
+		t.Fatal("first advisory lock acquisition failed")
+	}
+
+	secondAcquired, secondRelease, err := platformdb.TryAcquireAdvisoryLock(context.Background(), testDB, "test_usage_sync_multi_replica")
+	if err != nil {
+		release()
+		t.Fatal(err)
+	}
+	if secondAcquired {
+		secondRelease()
+		release()
+		t.Fatal("second advisory lock acquisition succeeded while first lock was held")
+	}
+
+	release()
+	thirdAcquired, thirdRelease, err := platformdb.TryAcquireAdvisoryLock(context.Background(), testDB, "test_usage_sync_multi_replica")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !thirdAcquired {
+		t.Fatal("advisory lock was not released")
+	}
+	thirdRelease()
 }
 
 func TestSyncStubReturnsNotImplemented(t *testing.T) {

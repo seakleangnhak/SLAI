@@ -341,6 +341,44 @@ func TestMockUsageEndpointAndUsageListDoNotExposeRawKey(t *testing.T) {
 	}
 }
 
+func TestAdminUsageSyncStatusAndManualSyncUpdatesStatus(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	client := newTestClient(t)
+	adminUser := createUser(t, "admin@example.com", users.RoleAdmin)
+	user := createUser(t, "user@example.com", users.RoleUser)
+	adminCookies := loginCookies(t, client, adminUser.Email)
+	userCookies := loginCookies(t, client, user.Email)
+
+	forbidden := client.get(t, "/v1/admin/usage/sync-status", userCookies)
+	assertStatus(t, forbidden, http.StatusForbidden)
+
+	before := client.get(t, "/v1/admin/usage/sync-status", adminCookies)
+	assertStatus(t, before, http.StatusOK)
+	if got := boolField(t, before.JSON, "sync_status.worker_enabled"); got {
+		t.Fatal("worker should be disabled in tests")
+	}
+
+	response := client.post(t, "/v1/admin/usage/sync", map[string]any{}, adminCookies)
+	assertStatus(t, response, http.StatusNotImplemented)
+
+	after := client.get(t, "/v1/admin/usage/sync-status", adminCookies)
+	assertStatus(t, after, http.StatusOK)
+	status := after.JSON["sync_status"].(map[string]any)
+	if status["currently_running"] != false {
+		t.Fatalf("currently_running = %#v", status["currently_running"])
+	}
+	if status["last_started_at"] == nil || status["last_finished_at"] == nil {
+		t.Fatalf("manual sync did not update timestamps: %#v", status)
+	}
+	if status["last_error"] == nil {
+		t.Fatalf("manual sync did not record last_error: %#v", status)
+	}
+	if status["last_result"] == nil {
+		t.Fatalf("manual sync did not record last_result: %#v", status)
+	}
+}
+
 func TestAdminUsageSyncStubReturns501(t *testing.T) {
 	requireDB(t)
 	truncateTables(t)
@@ -526,6 +564,23 @@ func stringField(t *testing.T, value map[string]any, path string) string {
 	result, ok := current.(string)
 	if !ok {
 		t.Fatalf("%s is not a string: %#v", path, current)
+	}
+	return result
+}
+
+func boolField(t *testing.T, value map[string]any, path string) bool {
+	t.Helper()
+	current := any(value)
+	for _, part := range strings.Split(path, ".") {
+		object, ok := current.(map[string]any)
+		if !ok {
+			t.Fatalf("%s is not an object at %s", path, part)
+		}
+		current = object[part]
+	}
+	result, ok := current.(bool)
+	if !ok {
+		t.Fatalf("%s is not a bool: %#v", path, current)
 	}
 	return result
 }

@@ -66,7 +66,9 @@ func run() error {
 }
 
 func serve(cfg config.Config, logger *slog.Logger) error {
-	ctx := context.Background()
+	ctx, cancelRoot := context.WithCancel(context.Background())
+	defer cancelRoot()
+
 	pool, err := platformdb.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
@@ -92,7 +94,10 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		APIKeyPrefix:     cfg.APIKeyPrefix,
 		OmniRoute:        cfg.OmniRoute,
 		OmniRouteClient:  omniRouteClient,
+		UsageSyncWorker:  cfg.UsageSyncWorker,
 	}, pool, logger)
+
+	server.StartUsageSyncWorker(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -106,6 +111,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 	select {
 	case sig := <-signalCh:
 		logger.Info("shutdown signal received", "signal", sig.String())
+		cancelRoot()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
@@ -113,6 +119,10 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		}
 		return nil
 	case err := <-errCh:
+		cancelRoot()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+		defer cancel()
+		_ = server.Shutdown(shutdownCtx)
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}

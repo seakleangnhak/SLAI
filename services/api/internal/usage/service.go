@@ -95,6 +95,7 @@ func (s Service) IngestEvent(ctx context.Context, input IngestInput) (IngestResu
 			return errors.New("usage event insert conflicted but existing event was not found")
 		}
 
+		suspendedKey := false
 		if costUnits > 0 {
 			eventID := event.ID
 			idempotencyKey := usageIdempotencyKey(input.ExternalSource, input.ExternalEventID)
@@ -121,13 +122,15 @@ func (s Service) IngestEvent(ctx context.Context, input IngestInput) (IngestResu
 				return err
 			}
 			if balance.AvailableUnits <= 0 {
-				if err := s.suspendResolvedKey(ctx, tx, key); err != nil {
+				suspended, err := s.suspendResolvedKey(ctx, tx, key)
+				if err != nil {
 					return err
 				}
+				suspendedKey = suspended
 			}
 		}
 
-		result = IngestResult{Event: &event, Status: StatusBilled}
+		result = IngestResult{Event: &event, Status: StatusBilled, SuspendedKey: suspendedKey}
 		return nil
 	})
 	if err != nil {
@@ -174,7 +177,7 @@ func (s Service) syncCallLogs(ctx context.Context, state syncState, limit int) (
 	}
 	sort.Slice(logs, func(i, j int) bool { return logs[i].OccurredAt.Before(logs[j].OccurredAt) })
 
-	result := SyncResult{}
+	result := SyncResult{Fetched: len(logs)}
 	for _, log := range logs {
 		input := IngestInput{
 			ExternalSource:  ExternalSourceOmniRouteCallLogs,
@@ -189,6 +192,7 @@ func (s Service) syncCallLogs(ctx context.Context, state syncState, limit int) (
 		}
 		ingested, err := s.IngestEvent(ctx, input)
 		if err != nil {
+			result.Failed++
 			return result, err
 		}
 		result.add(ingested)
@@ -209,7 +213,7 @@ func (s Service) syncUsageHistory(ctx context.Context, state syncState, limit in
 	}
 	sort.Slice(records, func(i, j int) bool { return records[i].OccurredAt.Before(records[j].OccurredAt) })
 
-	result := SyncResult{}
+	result := SyncResult{Fetched: len(records)}
 	for _, record := range records {
 		costUnits := record.CostUnits
 		input := IngestInput{
@@ -224,6 +228,7 @@ func (s Service) syncUsageHistory(ctx context.Context, state syncState, limit in
 		}
 		ingested, err := s.IngestEvent(ctx, input)
 		if err != nil {
+			result.Failed++
 			return result, err
 		}
 		result.add(ingested)
@@ -316,18 +321,18 @@ func (s Service) calculateCost(ctx context.Context, tx pgx.Tx, input IngestInput
 	return costUnits, map[string]any{"pricingRuleId": pricingRule.ID}, nil
 }
 
-func (s Service) suspendResolvedKey(ctx context.Context, tx pgx.Tx, key resolvedAPIKey) error {
+func (s Service) suspendResolvedKey(ctx context.Context, tx pgx.Tx, key resolvedAPIKey) (bool, error) {
 	if key.Status != apikeys.StatusActive {
-		return nil
+		return false, nil
 	}
 
 	if s.omniRouteCfg.Enabled && key.OmniRouteKeyID != nil && *key.OmniRouteKeyID != "" {
 		if s.omniRoute == nil {
-			return errors.New("omniroute client is required when OMNIROUTE_ENABLED=true")
+			return false, errors.New("omniroute client is required when OMNIROUTE_ENABLED=true")
 		}
 		isActive := false
 		if err := s.omniRoute.UpdateAPIKey(ctx, *key.OmniRouteKeyID, omniroute.UpdateAPIKeyPayload{IsActive: &isActive}); err != nil {
-			return fmt.Errorf("suspend omniroute api key after usage billing: %w", err)
+			return false, fmt.Errorf("suspend omniroute api key after usage billing: %w", err)
 		}
 	}
 
@@ -337,17 +342,16 @@ func (s Service) suspendResolvedKey(ctx context.Context, tx pgx.Tx, key resolved
 		WHERE id = $1 AND status = $3
 	`, key.ID, apikeys.StatusSuspended, apikeys.StatusActive)
 	if err != nil {
-		return fmt.Errorf("suspend api key after usage billing: %w", err)
+		return false, fmt.Errorf("suspend api key after usage billing: %w", err)
 	}
 
 	s.logger.Info("api key suspended after usage billing", "user_id", key.UserID, "key_id", key.ID)
-	return nil
+	return true, nil
 }
 
 func (r *SyncResult) add(result IngestResult) {
-	r.Processed++
 	if result.Duplicate {
-		r.Duplicates++
+		r.Duplicate++
 		return
 	}
 	if result.Ignored {
@@ -356,6 +360,9 @@ func (r *SyncResult) add(result IngestResult) {
 	}
 	if result.Status == StatusBilled {
 		r.Billed++
+	}
+	if result.SuspendedKey {
+		r.SuspendedKeys++
 	}
 }
 

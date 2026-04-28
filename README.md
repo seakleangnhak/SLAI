@@ -68,6 +68,11 @@ API variables live in `services/api/.env.example`:
 - `OMNIROUTE_USAGE_SYNC_MODE`
 - `OMNIROUTE_HTTP_TIMEOUT_SECONDS`
 - `OMNIROUTE_CALL_LOG_LIMIT`
+- `USAGE_SYNC_WORKER_ENABLED`
+- `USAGE_SYNC_INTERVAL_SECONDS`
+- `USAGE_SYNC_LOCK_KEY`
+- `USAGE_SYNC_BATCH_LIMIT`
+- `USAGE_SYNC_START_DELAY_SECONDS`
 
 Web variables live in `apps/web/.env.example`:
 
@@ -99,13 +104,13 @@ Implemented now:
 - Database guard preventing direct `credit_balances` mutation outside the ledger service transaction path
 - Admin seed command: `slai-api seed-admin`
 - Real OmniRoute HTTP client plus stub client for local mode/tests
+- Automatic scheduled usage sync worker with PostgreSQL advisory locking
 - Next.js app shells for landing, login, user dashboard, and admin dashboard
 - Docker Compose for Postgres, migrations, API, and web
 
 Not implemented yet:
 
 - Stripe or external payments
-- Automated scheduled usage sync worker
 
 ## API Surface
 
@@ -128,6 +133,7 @@ Not implemented yet:
 - `POST /v1/admin/ledger/adjustments`
 - `POST /v1/internal/usage/mock-event`
 - `POST /v1/admin/usage/sync`
+- `GET /v1/admin/usage/sync-status`
 - `GET /v1/admin/usage`
 - `GET /v1/admin/users/{id}/api-key`
 - `POST /v1/admin/users/{id}/api-key/suspend`
@@ -175,6 +181,24 @@ Async usage can temporarily make a balance negative. When billing leaves the bal
 
 `POST /v1/admin/usage/sync` reads `OMNIROUTE_USAGE_SYNC_MODE` and calls the OmniRoute interface. `call_logs` mode uses `GET /api/usage/call-logs?limit=...`; the endpoint does not currently support a `since` query, so SLAI relies on usage-event idempotency. `usage_history` mode calls `GET /api/usage/history`, but SLAI treats it as unsupported unless the response contains stable event ids and `apiKeyId`; `call_logs` is preferred.
 
+## Automatic Usage Sync Worker
+
+The API can run a background worker that periodically syncs OmniRoute usage and bills credits through the same idempotent usage service used by `POST /v1/admin/usage/sync`. The worker is disabled by default for local development.
+
+Recommended production values:
+
+```sh
+USAGE_SYNC_WORKER_ENABLED=true
+USAGE_SYNC_INTERVAL_SECONDS=60
+USAGE_SYNC_START_DELAY_SECONDS=10
+USAGE_SYNC_LOCK_KEY=slai_usage_sync
+USAGE_SYNC_BATCH_LIMIT=
+```
+
+If `USAGE_SYNC_BATCH_LIMIT` is empty or non-positive, SLAI uses `OMNIROUTE_CALL_LOG_LIMIT`. Each tick acquires a PostgreSQL advisory lock using `USAGE_SYNC_LOCK_KEY`, so multiple API replicas can be deployed without running billing sync concurrently. Running only one worker-enabled replica is still the simplest operational setup; the DB lock protects against accidental overlap.
+
+When `OMNIROUTE_ENABLED=false`, an enabled worker logs that sync is skipped and leaves startup healthy. Manual admin sync remains available at `POST /v1/admin/usage/sync`, and `GET /v1/admin/usage/sync-status` returns in-memory visibility for the latest run, including timestamps, last error, next scheduled run, and result counters.
+
 ## OmniRoute Requirement
 
 Use [seakleangnhak/OmniRoute](https://github.com/seakleangnhak/OmniRoute) or an upstream build with equivalent trusted management-auth support. SLAI sends `Authorization: Bearer <OMNIROUTE_MANAGEMENT_TOKEN>` to OmniRoute management APIs.
@@ -196,6 +220,11 @@ OMNIROUTE_MANAGEMENT_TOKEN=<same-secret>
 OMNIROUTE_USAGE_SYNC_MODE=call_logs
 OMNIROUTE_HTTP_TIMEOUT_SECONDS=15
 OMNIROUTE_CALL_LOG_LIMIT=100
+USAGE_SYNC_WORKER_ENABLED=true
+USAGE_SYNC_INTERVAL_SECONDS=60
+USAGE_SYNC_START_DELAY_SECONDS=10
+USAGE_SYNC_LOCK_KEY=slai_usage_sync
+USAGE_SYNC_BATCH_LIMIT=
 ```
 
 With this configuration, users call OmniRoute `/v1/*` directly using keys created through SLAI. SLAI creates, disables, enables, deletes, and lists keys through OmniRoute `/api/keys*`, then syncs `/api/usage/call-logs` to deduct prepaid credits. Local mode still works with `OMNIROUTE_ENABLED=false`.

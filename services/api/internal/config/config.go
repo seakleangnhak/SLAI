@@ -23,6 +23,7 @@ type Config struct {
 	ReadinessTimeout  time.Duration
 	ShutdownTimeout   time.Duration
 	OmniRoute         OmniRouteConfig
+	UsageSyncWorker   UsageSyncWorkerConfig
 }
 
 type OmniRouteConfig struct {
@@ -32,6 +33,14 @@ type OmniRouteConfig struct {
 	UsageSyncMode   string
 	HTTPTimeout     time.Duration
 	CallLogLimit    int
+}
+
+type UsageSyncWorkerConfig struct {
+	Enabled    bool
+	Interval   time.Duration
+	LockKey    string
+	BatchLimit int
+	StartDelay time.Duration
 }
 
 func Load() (Config, error) {
@@ -68,6 +77,22 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	usageSyncWorkerEnabled, err := boolFromEnv("USAGE_SYNC_WORKER_ENABLED", false)
+	if err != nil {
+		return Config{}, err
+	}
+	usageSyncIntervalSeconds, err := intFromEnv("USAGE_SYNC_INTERVAL_SECONDS", 60)
+	if err != nil {
+		return Config{}, err
+	}
+	usageSyncBatchLimit, err := intFromEnv("USAGE_SYNC_BATCH_LIMIT", 0)
+	if err != nil {
+		return Config{}, err
+	}
+	usageSyncStartDelaySeconds, err := intFromEnv("USAGE_SYNC_START_DELAY_SECONDS", 10)
+	if err != nil {
+		return Config{}, err
+	}
 
 	cfg := Config{
 		AppEnv:            stringFromEnv("APP_ENV", "development"),
@@ -92,6 +117,13 @@ func Load() (Config, error) {
 			HTTPTimeout:     time.Duration(omniRouteHTTPTimeoutSeconds) * time.Second,
 			CallLogLimit:    omniRouteCallLogLimit,
 		},
+		UsageSyncWorker: UsageSyncWorkerConfig{
+			Enabled:    usageSyncWorkerEnabled,
+			Interval:   time.Duration(usageSyncIntervalSeconds) * time.Second,
+			LockKey:    stringFromEnv("USAGE_SYNC_LOCK_KEY", "slai_usage_sync"),
+			BatchLimit: usageSyncBatchLimit,
+			StartDelay: time.Duration(usageSyncStartDelaySeconds) * time.Second,
+		},
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -107,6 +139,18 @@ func Load() (Config, error) {
 	}
 	if cfg.OmniRoute.CallLogLimit <= 0 {
 		cfg.OmniRoute.CallLogLimit = 100
+	}
+	if cfg.UsageSyncWorker.Interval <= 0 {
+		cfg.UsageSyncWorker.Interval = 60 * time.Second
+	}
+	if cfg.UsageSyncWorker.StartDelay < 0 {
+		cfg.UsageSyncWorker.StartDelay = 10 * time.Second
+	}
+	if cfg.UsageSyncWorker.LockKey == "" {
+		cfg.UsageSyncWorker.LockKey = "slai_usage_sync"
+	}
+	if cfg.UsageSyncWorker.BatchLimit <= 0 {
+		cfg.UsageSyncWorker.BatchLimit = cfg.OmniRoute.CallLogLimit
 	}
 
 	return cfg, nil

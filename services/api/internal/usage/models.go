@@ -48,10 +48,11 @@ type IngestInput struct {
 }
 
 type IngestResult struct {
-	Event     *Event `json:"event,omitempty"`
-	Status    string `json:"status"`
-	Duplicate bool   `json:"duplicate"`
-	Ignored   bool   `json:"ignored"`
+	Event        *Event `json:"event,omitempty"`
+	Status       string `json:"status"`
+	Duplicate    bool   `json:"duplicate"`
+	Ignored      bool   `json:"ignored"`
+	SuspendedKey bool   `json:"suspended_key,omitempty"`
 }
 
 type PricingRule struct {
@@ -78,8 +79,10 @@ type ListFilter struct {
 }
 
 type SyncResult struct {
-	Processed  int `json:"processed"`
-	Billed     int `json:"billed"`
-	Duplicates int `json:"duplicates"`
-	Ignored    int `json:"ignored"`
+	Fetched       int `json:"fetched"`
+	Billed        int `json:"billed"`
+	Duplicate     int `json:"duplicate"`
+	Ignored       int `json:"ignored"`
+	Failed        int `json:"failed"`
+	SuspendedKeys int `json:"suspended_keys"`
 }
