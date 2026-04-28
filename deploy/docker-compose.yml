@@ -33,6 +33,8 @@ services:
       OMNIROUTE_BASE_URL: http://omniroute:4000
       OMNIROUTE_MANAGEMENT_TOKEN: ""
       OMNIROUTE_USAGE_SYNC_MODE: call_logs
+      OMNIROUTE_HTTP_TIMEOUT_SECONDS: "15"
+      OMNIROUTE_CALL_LOG_LIMIT: "100"
     command: ["/app/slai-api", "migrate", "up"]
     depends_on:
       postgres:
@@ -62,6 +64,8 @@ services:
       OMNIROUTE_BASE_URL: http://omniroute:4000
       OMNIROUTE_MANAGEMENT_TOKEN: ""
       OMNIROUTE_USAGE_SYNC_MODE: call_logs
+      OMNIROUTE_HTTP_TIMEOUT_SECONDS: "15"
+      OMNIROUTE_CALL_LOG_LIMIT: "100"
     ports:
       - "8080:8080"
     depends_on:

@@ -9,7 +9,13 @@ import (
 	"github.com/slai/slai/services/api/internal/config"
 )
 
-var ErrNotImplemented = errors.New("omniroute client is a stub; real management API calls are not implemented yet")
+var (
+	ErrUnauthorized        = errors.New("omniroute request unauthorized")
+	ErrForbidden           = errors.New("omniroute request forbidden")
+	ErrNotFound            = errors.New("omniroute resource not found")
+	ErrUnsupportedResponse = errors.New("omniroute response is unsupported")
+	ErrNotImplemented      = errors.New("omniroute client is a stub; real management API calls are not implemented yet")
+)
 
 type Client interface {
 	CreateAPIKey(ctx context.Context, name string) (APIKey, error)
@@ -25,13 +31,19 @@ type APIKey struct {
 	Name      string
 	Prefix    string
 	RawKey    string
+	MachineID string
+	Status    string
+	IsActive  *bool
 	CreatedAt time.Time
 }
 
 type UpdateAPIKeyPayload struct {
-	Name     *string
-	Status   *string
-	IsActive *bool
+	Name               *string
+	Status             *string
+	IsActive           *bool
+	AllowedModels      []string
+	AllowedConnections []string
+	NoLog              *bool
 }
 
 type CallLog struct {

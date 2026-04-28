@@ -49,6 +49,7 @@ type Server struct {
 	adminService     admin.Service
 	apiKeyService    apikeys.Service
 	usageService     usage.Service
+	omniRouteCfg     config.OmniRouteConfig
 }
 
 func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Server {
@@ -74,6 +75,7 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 		adminService:     admin.NewService(pool),
 		apiKeyService:    apiKeyService,
 		usageService:     usage.NewService(pool, omniRouteClient, cfg.OmniRoute, logger),
+		omniRouteCfg:     cfg.OmniRoute,
 	}
 
 	mux := http.NewServeMux()
@@ -325,7 +327,7 @@ func (s *Server) adminSyncUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.usageService.SyncOmniRoute(r.Context(), queryLimit(r, 100))
+	result, err := s.usageService.SyncOmniRoute(r.Context(), queryLimit(r, s.omniRouteCfg.CallLogLimit))
 	if err != nil {
 		writeUsageError(w, err)
 		return

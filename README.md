@@ -66,6 +66,8 @@ API variables live in `services/api/.env.example`:
 - `OMNIROUTE_BASE_URL`
 - `OMNIROUTE_MANAGEMENT_TOKEN`
 - `OMNIROUTE_USAGE_SYNC_MODE`
+- `OMNIROUTE_HTTP_TIMEOUT_SECONDS`
+- `OMNIROUTE_CALL_LOG_LIMIT`
 
 Web variables live in `apps/web/.env.example`:
 
@@ -96,14 +98,14 @@ Implemented now:
 - Automatic API key suspension when async usage billing drives balance to zero or below
 - Database guard preventing direct `credit_balances` mutation outside the ledger service transaction path
 - Admin seed command: `slai-api seed-admin`
-- OmniRoute client interface and stub client
+- Real OmniRoute HTTP client plus stub client for local mode/tests
 - Next.js app shells for landing, login, user dashboard, and admin dashboard
 - Docker Compose for Postgres, migrations, API, and web
 
 Not implemented yet:
 
 - Stripe or external payments
-- Real OmniRoute management and usage HTTP client calls
+- Automated scheduled usage sync worker
 
 ## API Surface
 
@@ -142,11 +144,11 @@ For MVP, each user can have one `ACTIVE` API key. The database supports more key
 - Suspend: marks the local key `SUSPENDED` and sends an inactive update to OmniRoute when enabled.
 - Resume: only succeeds when the user balance is greater than zero, then marks the key `ACTIVE` and sends an active update to OmniRoute when enabled.
 
-When `OMNIROUTE_ENABLED=false`, SLAI runs in local/dev mode and generates a local `API_KEY_PREFIX` key such as `sk_slai_...`. No OmniRoute key id is stored. When `OMNIROUTE_ENABLED=true`, SLAI calls OmniRoute `CreateAPIKey` and uses the raw key returned by OmniRoute as the user-visible key.
+When `OMNIROUTE_ENABLED=false`, SLAI runs in local/dev mode and generates a local `API_KEY_PREFIX` key such as `sk_slai_...`. No OmniRoute key id is stored. When `OMNIROUTE_ENABLED=true`, SLAI calls OmniRoute `POST /api/keys` and uses the raw key returned by OmniRoute as the user-visible key. Suspend/resume uses `PATCH /api/keys/{id}` with `isActive=false/true`, and revoke/delete uses `DELETE /api/keys/{id}`.
 
 ## Usage Ingestion
 
-SLAI bills usage asynchronously from OmniRoute logs. Users still call OmniRoute `/v1/*` directly with the OmniRoute-generated key; SLAI maps OmniRoute key ids back to local `api_keys.omniroute_key_id`, writes a `usage_events` row, and deducts credits through the ledger in the same database transaction.
+SLAI bills usage asynchronously from OmniRoute call logs. Users still call OmniRoute `/v1/*` directly with the OmniRoute-generated key; SLAI fetches `GET /api/usage/call-logs`, maps OmniRoute `apiKeyId` back to local `api_keys.omniroute_key_id`, writes a `usage_events` row, and deducts credits through the ledger in the same database transaction.
 
 Usage idempotency is enforced by `usage_events.external_source` plus `usage_events.external_event_id`, and ledger idempotency uses `usage:{external_source}:{external_event_id}`. A replay returns a duplicate result and does not deduct credits again.
 
@@ -171,13 +173,29 @@ curl -X POST http://localhost:8080/v1/internal/usage/mock-event \
 
 Async usage can temporarily make a balance negative. When billing leaves the balance at or below zero, SLAI marks the API key `SUSPENDED`; if OmniRoute is enabled, SLAI also sends `isActive=false` through the OmniRoute client abstraction.
 
-`POST /v1/admin/usage/sync` reads `OMNIROUTE_USAGE_SYNC_MODE` and calls the OmniRoute interface for call logs or usage history. The real OmniRoute HTTP client is still pending, so the built-in stub returns a clean `501` until that client is implemented.
+`POST /v1/admin/usage/sync` reads `OMNIROUTE_USAGE_SYNC_MODE` and calls the OmniRoute interface. `call_logs` mode uses `GET /api/usage/call-logs?limit=...`; the endpoint does not currently support a `since` query, so SLAI relies on usage-event idempotency. `usage_history` mode calls `GET /api/usage/history`, but SLAI treats it as unsupported unless the response contains stable event ids and `apiKeyId`; `call_logs` is preferred.
 
 ## OmniRoute Requirement
 
-SLAI creates/manages OmniRoute API keys and syncs OmniRoute call logs or usage history to deduct credits. For server-to-server management and usage sync, OmniRoute likely needs a small patch:
+Use [seakleangnhak/OmniRoute](https://github.com/seakleangnhak/OmniRoute) or an upstream build with equivalent trusted management-auth support. SLAI sends `Authorization: Bearer <OMNIROUTE_MANAGEMENT_TOKEN>` to OmniRoute management APIs.
 
-- Add `OMNIROUTE_MANAGEMENT_TOKEN`
-- Allow `Authorization: Bearer <token>` on OmniRoute management APIs such as `/api/keys`
+Recommended OmniRoute environment:
 
-The SLAI API currently includes the key-management and usage-sync abstractions but intentionally uses a stub client until OmniRoute management auth and the real HTTP client are available.
+```sh
+REQUIRE_API_KEY=true
+ALLOW_API_KEY_REVEAL=false
+OMNIROUTE_MANAGEMENT_TOKEN=<long-random-secret>
+```
+
+SLAI environment for a real OmniRoute deployment:
+
+```sh
+OMNIROUTE_ENABLED=true
+OMNIROUTE_BASE_URL=https://your-omniroute-domain.com
+OMNIROUTE_MANAGEMENT_TOKEN=<same-secret>
+OMNIROUTE_USAGE_SYNC_MODE=call_logs
+OMNIROUTE_HTTP_TIMEOUT_SECONDS=15
+OMNIROUTE_CALL_LOG_LIMIT=100
+```
+
+With this configuration, users call OmniRoute `/v1/*` directly using keys created through SLAI. SLAI creates, disables, enables, deletes, and lists keys through OmniRoute `/api/keys*`, then syncs `/api/usage/call-logs` to deduct prepaid credits. Local mode still works with `OMNIROUTE_ENABLED=false`.

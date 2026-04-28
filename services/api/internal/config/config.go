@@ -30,6 +30,8 @@ type OmniRouteConfig struct {
 	BaseURL         string
 	ManagementToken string
 	UsageSyncMode   string
+	HTTPTimeout     time.Duration
+	CallLogLimit    int
 }
 
 func Load() (Config, error) {
@@ -58,6 +60,15 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	omniRouteHTTPTimeoutSeconds, err := intFromEnv("OMNIROUTE_HTTP_TIMEOUT_SECONDS", 15)
+	if err != nil {
+		return Config{}, err
+	}
+	omniRouteCallLogLimit, err := intFromEnv("OMNIROUTE_CALL_LOG_LIMIT", 100)
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
 		AppEnv:            stringFromEnv("APP_ENV", "development"),
 		HTTPAddr:          stringFromEnv("HTTP_ADDR", ":8080"),
@@ -78,11 +89,24 @@ func Load() (Config, error) {
 			BaseURL:         stringFromEnv("OMNIROUTE_BASE_URL", "http://localhost:4000"),
 			ManagementToken: stringFromEnv("OMNIROUTE_MANAGEMENT_TOKEN", ""),
 			UsageSyncMode:   stringFromEnv("OMNIROUTE_USAGE_SYNC_MODE", "call_logs"),
+			HTTPTimeout:     time.Duration(omniRouteHTTPTimeoutSeconds) * time.Second,
+			CallLogLimit:    omniRouteCallLogLimit,
 		},
 	}
 
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")
+	}
+	if cfg.OmniRoute.Enabled {
+		if cfg.OmniRoute.BaseURL == "" {
+			return Config{}, fmt.Errorf("OMNIROUTE_BASE_URL is required when OMNIROUTE_ENABLED=true")
+		}
+		if cfg.OmniRoute.ManagementToken == "" {
+			return Config{}, fmt.Errorf("OMNIROUTE_MANAGEMENT_TOKEN is required when OMNIROUTE_ENABLED=true")
+		}
+	}
+	if cfg.OmniRoute.CallLogLimit <= 0 {
+		cfg.OmniRoute.CallLogLimit = 100
 	}
 
 	return cfg, nil
@@ -93,6 +117,18 @@ func stringFromEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func intFromEnv(key string, fallback int) (int, error) {
+	value, ok := os.LookupEnv(key)
+	if !ok || value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("parse %s as int: %w", key, err)
+	}
+	return parsed, nil
 }
 
 func boolFromEnv(key string, fallback bool) (bool, error) {

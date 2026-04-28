@@ -2,10 +2,13 @@ package usage_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -229,6 +232,68 @@ func TestUsageSuspensionCallsOmniRouteWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestRealOmniRouteClientBillingFlowWithFakeServer(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	user := createUser(t, "user@example.com", users.RoleUser)
+	creditUser(t, user.ID, 1)
+	fake := newFakeOmniRouteServer(t)
+	defer fake.server.Close()
+
+	omniClient, err := omniroute.NewHTTPClient(config.OmniRouteConfig{
+		BaseURL:         fake.server.URL,
+		ManagementToken: "secret-token",
+		HTTPTimeout:     time.Second,
+		CallLogLimit:    100,
+	}, testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	apiKeys := apikeys.NewService(testDB, apikeys.Config{Pepper: "pepper", Prefix: "sk_slai", OmniRouteEnabled: true}, omniClient, testLogger())
+	created, err := apiKeys.CreateAPIKey(context.Background(), user.ID, "Default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.RawAPIKey != "omni_raw_abcdefghijklmnopqrstuvwxyz" {
+		t.Fatalf("raw key = %s", created.RawAPIKey)
+	}
+
+	var storedOmniRouteKeyID string
+	if err := testDB.QueryRow(context.Background(), `SELECT omniroute_key_id FROM api_keys WHERE id = $1`, created.APIKey.ID).Scan(&storedOmniRouteKeyID); err != nil {
+		t.Fatal(err)
+	}
+	if storedOmniRouteKeyID != "omni-key-1" {
+		t.Fatalf("stored omniroute key id = %s", storedOmniRouteKeyID)
+	}
+
+	svc := usage.NewService(testDB, omniClient, config.OmniRouteConfig{Enabled: true, UsageSyncMode: "call_logs", CallLogLimit: 100}, testLogger())
+	result, err := svc.SyncOmniRoute(context.Background(), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Billed != 1 || result.Processed != 1 {
+		t.Fatalf("sync result = %#v", result)
+	}
+	assertBalanceAndLifetimeUsed(t, user.ID, -1, 2)
+	assertKeyStatus(t, created.APIKey.ID, apikeys.StatusSuspended)
+	if fake.patchInactiveCalls != 1 {
+		t.Fatalf("patch inactive calls = %d, want 1", fake.patchInactiveCalls)
+	}
+
+	replay, err := svc.SyncOmniRoute(context.Background(), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replay.Duplicates != 1 || replay.Billed != 0 {
+		t.Fatalf("replay result = %#v", replay)
+	}
+	assertBalanceAndLifetimeUsed(t, user.ID, -1, 2)
+	if fake.patchInactiveCalls != 1 {
+		t.Fatalf("duplicate sync patched key again: %d", fake.patchInactiveCalls)
+	}
+}
+
 func TestSyncStubReturnsNotImplemented(t *testing.T) {
 	requireDB(t)
 	truncateTables(t)
@@ -409,6 +474,64 @@ func (m *mockOmniRoute) updateCallsValue() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.updateCalls
+}
+
+type fakeOmniRouteServer struct {
+	t                  *testing.T
+	server             *httptest.Server
+	patchInactiveCalls int
+}
+
+func newFakeOmniRouteServer(t *testing.T) *fakeOmniRouteServer {
+	t.Helper()
+	fake := &fakeOmniRouteServer{t: t}
+	fake.server = httptest.NewServer(http.HandlerFunc(fake.handle))
+	return fake
+}
+
+func (f *fakeOmniRouteServer) handle(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Authorization") != "Bearer secret-token" {
+		f.t.Fatalf("Authorization = %q", r.Header.Get("Authorization"))
+	}
+
+	switch {
+	case r.Method == http.MethodPost && r.URL.Path == "/api/keys":
+		writeTestJSON(f.t, w, http.StatusCreated, map[string]any{
+			"key":       "omni_raw_abcdefghijklmnopqrstuvwxyz",
+			"name":      "SLAI user@example.com",
+			"id":        "omni-key-1",
+			"machineId": "machine-1",
+		})
+	case r.Method == http.MethodGet && r.URL.Path == "/api/usage/call-logs":
+		writeTestJSON(f.t, w, http.StatusOK, []map[string]any{{
+			"id":        "fake-log-1",
+			"apiKeyId":  "omni-key-1",
+			"model":     "gpt-5.5",
+			"provider":  "openai",
+			"tokens":    map[string]any{"in": 1001, "out": 0},
+			"timestamp": "2026-04-28T10:00:00Z",
+		}})
+	case r.Method == http.MethodPatch && r.URL.Path == "/api/keys/omni-key-1":
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			f.t.Fatal(err)
+		}
+		if body["isActive"] == false {
+			f.patchInactiveCalls++
+		}
+		writeTestJSON(f.t, w, http.StatusOK, map[string]any{"ok": true})
+	default:
+		f.t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+	}
+}
+
+func writeTestJSON(t *testing.T, w http.ResponseWriter, status int, value any) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(value); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func startPostgres(ctx context.Context) (string, func(), error) {

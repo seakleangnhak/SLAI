@@ -16,6 +16,7 @@ import (
 	"github.com/slai/slai/services/api/internal/auth"
 	"github.com/slai/slai/services/api/internal/config"
 	"github.com/slai/slai/services/api/internal/ledger"
+	"github.com/slai/slai/services/api/internal/omniroute"
 	platformdb "github.com/slai/slai/services/api/internal/platform/db"
 	httpserver "github.com/slai/slai/services/api/internal/platform/http"
 	"github.com/slai/slai/services/api/internal/users"
@@ -72,6 +73,15 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 	}
 	defer pool.Close()
 
+	var omniRouteClient omniroute.Client = omniroute.NewStubClient(cfg.OmniRoute, logger)
+	if cfg.OmniRoute.Enabled {
+		client, err := omniroute.NewHTTPClient(cfg.OmniRoute, logger)
+		if err != nil {
+			return fmt.Errorf("configure omniroute client: %w", err)
+		}
+		omniRouteClient = client
+	}
+
 	server := httpserver.NewServer(httpserver.ServerConfig{
 		Addr:             cfg.HTTPAddr,
 		ReadinessTimeout: cfg.ReadinessTimeout,
@@ -81,6 +91,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		APIKeyPepper:     cfg.APIKeyPepper,
 		APIKeyPrefix:     cfg.APIKeyPrefix,
 		OmniRoute:        cfg.OmniRoute,
+		OmniRouteClient:  omniRouteClient,
 	}, pool, logger)
 
 	errCh := make(chan error, 1)

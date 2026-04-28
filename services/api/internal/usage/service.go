@@ -141,6 +141,9 @@ func (s Service) SyncOmniRoute(ctx context.Context, limit int) (SyncResult, erro
 	if s.omniRoute == nil {
 		return SyncResult{}, ErrSyncNotImplemented
 	}
+	if limit <= 0 {
+		limit = s.omniRouteCfg.CallLogLimit
+	}
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
