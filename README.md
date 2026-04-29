@@ -43,7 +43,7 @@ Implemented now:
 - Credit ledger
 - Manual admin top-ups
 - Admin credit adjustments
-- Admin audit logs
+- Admin audit log writing and listing
 - API key creation, rotation, revocation, suspension, and resume
 - One ACTIVE API key per user for MVP
 - API key HMAC hash storage with display prefix only
@@ -55,15 +55,16 @@ Implemented now:
 - Automatic scheduled usage sync worker
 - PostgreSQL advisory lock for usage sync
 - Admin usage sync status endpoint
+- Admin user management read and status endpoints
+- MVP user dashboard and admin console
+- Admin audit log UI page
 - Docker Compose for local development
-- Basic Next.js app shells
 
 Not included yet:
 
 - Stripe or other payment provider integration
-- Full production admin UI
-- Deep user dashboard UI
-- Real customer support workflows
+- Customer self-serve top-ups
+- Deep production reporting and support workflows
 - Multi-key user management beyond the MVP one-active-key rule
 
 ## Repository Layout
@@ -415,6 +416,33 @@ The response includes:
 
 Manual sync updates the same status tracker.
 
+## Admin Audit Logs
+
+Admin actions write audit log rows for package changes, manual top-ups, credit
+adjustments, user status changes, and API key actions.
+
+Admins can list audit logs with filters:
+
+```http
+GET /v1/admin/audit-logs?action=manual_topup_created&target_type=payment
+```
+
+Supported query parameters:
+
+- `admin_id`
+- `action`
+- `target_type`
+- `target_id`
+- `from`
+- `to`
+- `limit`
+- `offset`
+
+The response joins the admin user email for visibility and does not expose
+password hashes, session tokens, API key hashes, raw API keys, peppers,
+management tokens, or secret values. The Next.js admin console includes an
+Audit Logs page at `/admin/audit`.
+
 ## Main API Endpoints
 
 Public and authenticated endpoints:
@@ -444,6 +472,10 @@ Admin endpoints:
 - `POST /v1/admin/usage/sync`
 - `GET /v1/admin/usage/sync-status`
 - `GET /v1/admin/usage`
+- `GET /v1/admin/audit-logs`
+- `GET /v1/admin/users`
+- `GET /v1/admin/users/{id}`
+- `PATCH /v1/admin/users/{id}/status`
 - `GET /v1/admin/users/{id}/api-key`
 - `POST /v1/admin/users/{id}/api-key/suspend`
 - `POST /v1/admin/users/{id}/api-key/resume`

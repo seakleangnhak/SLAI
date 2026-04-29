@@ -16,7 +16,8 @@ const links = [
   { href: "/admin/users", label: "Users", description: "Open a user by ID for key actions and top-ups." },
   { href: "/admin/packages", label: "Packages", description: "Create and edit public prepaid packages." },
   { href: "/admin/usage", label: "Usage", description: "Inspect billed and ignored usage events." },
-  { href: "/admin/sync", label: "Sync status", description: "Trigger manual sync and inspect worker state." }
+  { href: "/admin/sync", label: "Sync status", description: "Trigger manual sync and inspect worker state." },
+  { href: "/admin/audit", label: "Audit logs", description: "Review admin actions and operational changes." }
 ];
 
 export default function AdminPage() {
@@ -55,7 +56,7 @@ export default function AdminPage() {
         <MetricCard label="Recent usage" value={formatUnits(usage.length)} hint="Latest admin usage rows loaded" />
       </section>
 
-      <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         {links.map((item) => (
           <Link key={item.href} href={item.href} className="block rounded-lg border border-slate-200 bg-white p-5 shadow-sm hover:border-cyan-200 hover:bg-cyan-50">
             <h2 className="text-base font-semibold text-slate-950">{item.label}</h2>

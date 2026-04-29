@@ -322,6 +322,111 @@ func TestAdminUserStatusActivateDoesNotResumeAPIKey(t *testing.T) {
 	}
 }
 
+func TestAdminAuditLogsListRequiresAdminSupportsFiltersAndSanitizesMetadata(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	client := newTestClient(t)
+	adminUser := createUser(t, "admin@example.com", users.RoleAdmin)
+	user := createUser(t, "user@example.com", users.RoleUser)
+	adminCookies := loginCookies(t, client, adminUser.Email)
+	userCookies := loginCookies(t, client, user.Email)
+
+	insertAudit := func(action, targetType, targetID string, metadata map[string]any, createdAt time.Time) {
+		t.Helper()
+		metadataBytes, err := json.Marshal(metadata)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = testDB.Exec(context.Background(), `
+			INSERT INTO admin_audit_logs (admin_id, action, target_type, target_id, metadata, created_at)
+			VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+		`, adminUser.ID, action, targetType, targetID, string(metadataBytes), createdAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	baseTime := time.Date(2026, 4, 28, 10, 0, 0, 0, time.UTC)
+	insertAudit("package_created", "credit_package", "pkg-1", map[string]any{
+		"name":         "Starter",
+		"passwordHash": "dont-leak-password",
+		"nested":       map[string]any{"token": "dont-leak-token", "safe": "safe-value"},
+		"raw_api_key":  "dont-leak-raw-key",
+		"apiKeyPepper": "dont-leak-pepper",
+	}, baseTime)
+	insertAudit("manual_topup_created", "payment", "pay-1", map[string]any{
+		"userId":      user.ID,
+		"creditUnits": 5000,
+	}, baseTime.Add(time.Minute))
+	insertAudit("api_key_suspended", "api_key", "key-1", map[string]any{
+		"userId":                   user.ID,
+		"omnirouteManagementToken": "dont-leak-management-token",
+	}, baseTime.Add(2*time.Minute))
+
+	forbidden := client.get(t, "/v1/admin/audit-logs", userCookies)
+	assertStatus(t, forbidden, http.StatusForbidden)
+
+	list := client.get(t, "/v1/admin/audit-logs?limit=100&offset=0", adminCookies)
+	assertStatus(t, list, http.StatusOK)
+	if got := numberField(t, list.JSON, "total"); got != 3 {
+		t.Fatalf("total = %v", got)
+	}
+	items := list.JSON["items"].([]any)
+	if len(items) != 3 {
+		t.Fatalf("items len = %d", len(items))
+	}
+	first := items[0].(map[string]any)
+	if got := first["admin_email"]; got != adminUser.Email {
+		t.Fatalf("admin_email = %#v", got)
+	}
+
+	for _, forbiddenValue := range []string{
+		"dont-leak-password",
+		"dont-leak-token",
+		"dont-leak-raw-key",
+		"dont-leak-pepper",
+		"dont-leak-management-token",
+		"password_hash",
+		"token_hash",
+		"key_hash",
+		"raw_api_key\":\"dont-leak-raw-key",
+	} {
+		if strings.Contains(list.Body, forbiddenValue) {
+			t.Fatalf("audit log list leaked %q: %s", forbiddenValue, list.Body)
+		}
+	}
+
+	actionFiltered := client.get(t, "/v1/admin/audit-logs?action=manual_topup_created", adminCookies)
+	assertStatus(t, actionFiltered, http.StatusOK)
+	if got := numberField(t, actionFiltered.JSON, "total"); got != 1 {
+		t.Fatalf("action filter total = %v", got)
+	}
+	if got := stringField(t, actionFiltered.JSON["items"].([]any)[0].(map[string]any), "action"); got != "manual_topup_created" {
+		t.Fatalf("action = %q", got)
+	}
+
+	targetTypeFiltered := client.get(t, "/v1/admin/audit-logs?target_type=payment", adminCookies)
+	assertStatus(t, targetTypeFiltered, http.StatusOK)
+	if got := numberField(t, targetTypeFiltered.JSON, "total"); got != 1 {
+		t.Fatalf("target_type filter total = %v", got)
+	}
+
+	targetIDFiltered := client.get(t, "/v1/admin/audit-logs?target_id=key-1", adminCookies)
+	assertStatus(t, targetIDFiltered, http.StatusOK)
+	if got := numberField(t, targetIDFiltered.JSON, "total"); got != 1 {
+		t.Fatalf("target_id filter total = %v", got)
+	}
+
+	page := client.get(t, "/v1/admin/audit-logs?limit=1&offset=1", adminCookies)
+	assertStatus(t, page, http.StatusOK)
+	if got := numberField(t, page.JSON, "total"); got != 3 {
+		t.Fatalf("pagination total = %v", got)
+	}
+	if items := page.JSON["items"].([]any); len(items) != 1 {
+		t.Fatalf("pagination items len = %d", len(items))
+	}
+}
+
 func TestManualTopUpLedgerMutationAndBalanceUpdate(t *testing.T) {
 	requireDB(t)
 	truncateTables(t)

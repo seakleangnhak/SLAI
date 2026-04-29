@@ -120,6 +120,7 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 	mux.HandleFunc("POST /v1/admin/usage/sync", server.adminSyncUsage)
 	mux.HandleFunc("GET /v1/admin/usage/sync-status", server.adminUsageSyncStatus)
 	mux.HandleFunc("GET /v1/admin/usage", server.adminListUsage)
+	mux.HandleFunc("GET /v1/admin/audit-logs", server.adminListAuditLogs)
 	mux.HandleFunc("GET /v1/admin/users", server.adminListUsers)
 	mux.HandleFunc("GET /v1/admin/users/{id}", server.adminGetUser)
 	mux.HandleFunc("PATCH /v1/admin/users/{id}/status", server.adminUpdateUserStatus)
@@ -390,6 +391,28 @@ func (s *Server) adminListUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"usage": events})
+}
+
+func (s *Server) adminListAuditLogs(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+
+	filter, err := auditLogFilterFromRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_audit_log_filter", err)
+		return
+	}
+	result, err := admin.NewAuditLogRepository(s.db).List(r.Context(), filter)
+	if err != nil {
+		if errors.Is(err, admin.ErrInvalidAuditLogFilter) {
+			writeError(w, http.StatusBadRequest, "invalid_audit_log_filter", err)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "audit_logs_failed", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) getAPIKey(w http.ResponseWriter, r *http.Request) {
@@ -867,6 +890,33 @@ func usageFilterFromRequest(r *http.Request) (usage.ListFilter, error) {
 			return usage.ListFilter{}, err
 		}
 		filter.EndTime = &parsed
+	}
+	return filter, nil
+}
+
+func auditLogFilterFromRequest(r *http.Request) (admin.AuditLogFilter, error) {
+	query := r.URL.Query()
+	filter := admin.AuditLogFilter{
+		AdminID:    query.Get("admin_id"),
+		Action:     query.Get("action"),
+		TargetType: query.Get("target_type"),
+		TargetID:   query.Get("target_id"),
+		Limit:      queryLimit(r, 50),
+		Offset:     queryOffset(r),
+	}
+	if from := strings.TrimSpace(query.Get("from")); from != "" {
+		parsed, err := time.Parse(time.RFC3339, from)
+		if err != nil {
+			return admin.AuditLogFilter{}, err
+		}
+		filter.From = &parsed
+	}
+	if to := strings.TrimSpace(query.Get("to")); to != "" {
+		parsed, err := time.Parse(time.RFC3339, to)
+		if err != nil {
+			return admin.AuditLogFilter{}, err
+		}
+		filter.To = &parsed
 	}
 	return filter, nil
 }

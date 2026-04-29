@@ -28,7 +28,8 @@ const navItems = {
     { href: "/admin/users", label: "Users" },
     { href: "/admin/packages", label: "Packages" },
     { href: "/admin/usage", label: "Usage" },
-    { href: "/admin/sync", label: "Sync" }
+    { href: "/admin/sync", label: "Sync" },
+    { href: "/admin/audit", label: "Audit Logs" }
   ],
   public: [
     { href: "/packages", label: "Packages" },

@@ -257,6 +257,35 @@ export type AdminUserDetail = {
   updated_at: string;
 };
 
+export type AuditLogFilter = {
+  admin_id?: string;
+  action?: string;
+  target_type?: string;
+  target_id?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  offset?: number;
+};
+
+export type AuditLogItem = {
+  id: string;
+  admin_id: string;
+  admin_email: string;
+  action: string;
+  target_type?: string | null;
+  target_id?: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+export type AuditLogListResponse = {
+  items: AuditLogItem[];
+  limit: number;
+  offset: number;
+  total: number;
+};
+
 
 export class ApiError extends Error {
   status: number;
@@ -381,6 +410,10 @@ export const api = {
           method: "PATCH",
           body: { status }
         })
+    },
+    auditLogs: {
+      list: (filter: AuditLogFilter = {}) =>
+        apiFetch<AuditLogListResponse>(`/v1/admin/audit-logs${toQuery(filter)}`)
     },
     packages: {
       list: () => apiFetch<{ packages: CreditPackage[] }>("/v1/admin/packages"),
