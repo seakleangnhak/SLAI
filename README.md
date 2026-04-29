@@ -55,6 +55,7 @@ Implemented now:
 - Automatic scheduled usage sync worker
 - PostgreSQL advisory lock for usage sync
 - Admin usage sync status endpoint
+- Admin dashboard metrics endpoint
 - Admin user management read and status endpoints
 - MVP user dashboard and admin console
 - Admin audit log UI page
@@ -464,6 +465,7 @@ Public and authenticated endpoints:
 
 Admin endpoints:
 
+- `GET /v1/admin/dashboard`
 - `GET /v1/admin/packages`
 - `POST /v1/admin/packages`
 - `PATCH /v1/admin/packages/{id}`

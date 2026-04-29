@@ -129,6 +129,10 @@ export type SyncStatus = {
   last_result?: SyncResult | null;
   next_run_at?: string | null;
   currently_running: boolean;
+  omniroute_enabled?: boolean;
+  sync_mode?: string;
+  worker_interval_seconds?: number;
+  batch_limit?: number;
 };
 
 export type ManualTopUpInput = {
@@ -286,6 +290,81 @@ export type AuditLogListResponse = {
   total: number;
 };
 
+export type AdminDashboard = {
+  users: {
+    total: number;
+    active: number;
+    suspended: number;
+  };
+  credits: {
+    total_available_units: number;
+    total_purchased_units: number;
+    total_used_units: number;
+  };
+  revenue: {
+    total_paid_minor: number;
+    currency: string;
+  };
+  api_keys: {
+    active: number;
+    suspended: number;
+    revoked: number;
+  };
+  usage: {
+    total_events: number;
+    billed_events: number;
+    failed_events: number;
+    ignored_events: number;
+    total_input_tokens: number;
+    total_output_tokens: number;
+    total_tokens: number;
+    total_cost_units: number;
+  };
+  recent_payments: AdminDashboardPayment[];
+  recent_usage: AdminDashboardUsage[];
+  recent_audit_logs: AdminDashboardAuditLog[];
+  sync_status: {
+    worker_enabled: boolean;
+    currently_running: boolean;
+    last_success_at?: string | null;
+    last_error?: string | null;
+  };
+};
+
+export type AdminDashboardPayment = {
+  id: string;
+  user_id: string;
+  user_email: string;
+  amount_minor: number;
+  currency: string;
+  credit_units: number;
+  status: string;
+  created_at: string;
+};
+
+export type AdminDashboardUsage = {
+  id: string;
+  user_id: string;
+  user_email: string;
+  model?: string | null;
+  provider?: string | null;
+  total_tokens: number;
+  cost_units: number;
+  status: string;
+  occurred_at: string;
+  created_at: string;
+};
+
+export type AdminDashboardAuditLog = {
+  id: string;
+  admin_id: string;
+  admin_email: string;
+  action: string;
+  target_type?: string | null;
+  target_id?: string | null;
+  created_at: string;
+};
+
 
 export class ApiError extends Error {
   status: number;
@@ -401,6 +480,9 @@ export const api = {
     revoke: () => apiFetch<{ api_key: PublicAPIKey }>("/v1/api-key", { method: "DELETE" })
   },
   admin: {
+    dashboard: {
+      get: () => apiFetch<AdminDashboard>("/v1/admin/dashboard")
+    },
     users: {
       list: (filter: AdminUserFilter = {}) =>
         apiFetch<AdminUserListResponse>(`/v1/admin/users${toQuery(filter)}`),

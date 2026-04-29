@@ -50,6 +50,7 @@ type Server struct {
 	adminService      admin.Service
 	apiKeyService     apikeys.Service
 	usageService      usage.Service
+	omniRouteCfg      config.OmniRouteConfig
 	usageSyncCfg      config.UsageSyncWorkerConfig
 	usageSyncExecutor *usage.SyncExecutor
 	usageSyncStatus   *usage.SyncStatusTracker
@@ -89,6 +90,7 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 		adminService:      admin.NewService(pool),
 		apiKeyService:     apiKeyService,
 		usageService:      usageService,
+		omniRouteCfg:      cfg.OmniRoute,
 		usageSyncCfg:      cfg.UsageSyncWorker,
 		usageSyncExecutor: usageSyncExecutor,
 		usageSyncStatus:   usageSyncStatus,
@@ -111,6 +113,7 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 	mux.HandleFunc("POST /v1/api-key", server.createAPIKey)
 	mux.HandleFunc("POST /v1/api-key/rotate", server.rotateAPIKey)
 	mux.HandleFunc("DELETE /v1/api-key", server.revokeAPIKey)
+	mux.HandleFunc("GET /v1/admin/dashboard", server.adminDashboard)
 	mux.HandleFunc("GET /v1/admin/packages", server.adminListPackages)
 	mux.HandleFunc("POST /v1/admin/packages", server.adminCreatePackage)
 	mux.HandleFunc("PATCH /v1/admin/packages/{id}", server.adminUpdatePackage)
@@ -368,11 +371,26 @@ func (s *Server) adminSyncUsage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"sync": result})
 }
 
+type usageSyncStatusResponse struct {
+	usage.SyncStatus
+	OmniRouteEnabled      bool   `json:"omniroute_enabled"`
+	SyncMode              string `json:"sync_mode"`
+	WorkerIntervalSeconds int    `json:"worker_interval_seconds"`
+	BatchLimit            int    `json:"batch_limit"`
+}
+
 func (s *Server) adminUsageSyncStatus(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireAdmin(w, r); !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"sync_status": s.usageSyncStatus.Snapshot()})
+	status := usageSyncStatusResponse{
+		SyncStatus:            s.usageSyncStatus.Snapshot(),
+		OmniRouteEnabled:      s.omniRouteCfg.Enabled,
+		SyncMode:              s.omniRouteCfg.UsageSyncMode,
+		WorkerIntervalSeconds: int(s.usageSyncCfg.Interval.Seconds()),
+		BatchLimit:            s.usageSyncCfg.BatchLimit,
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sync_status": status})
 }
 
 func (s *Server) adminListUsage(w http.ResponseWriter, r *http.Request) {
@@ -391,6 +409,26 @@ func (s *Server) adminListUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"usage": events})
+}
+
+func (s *Server) adminDashboard(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+
+	dashboard, err := admin.NewDashboardRepository(s.db).Get(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "admin_dashboard_failed", err)
+		return
+	}
+	syncStatus := s.usageSyncStatus.Snapshot()
+	dashboard.SyncStatus = admin.DashboardSyncStatus{
+		WorkerEnabled:    syncStatus.WorkerEnabled,
+		CurrentlyRunning: syncStatus.CurrentlyRunning,
+		LastSuccessAt:    syncStatus.LastSuccessAt,
+		LastError:        syncStatus.LastError,
+	}
+	writeJSON(w, http.StatusOK, dashboard)
 }
 
 func (s *Server) adminListAuditLogs(w http.ResponseWriter, r *http.Request) {

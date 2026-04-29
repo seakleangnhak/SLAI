@@ -2,6 +2,13 @@ export function formatUnits(value: number | null | undefined) {
   return new Intl.NumberFormat("en-US").format(value ?? 0);
 }
 
+export function formatCompactUnits(value: number | null | undefined) {
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 1,
+    notation: "compact"
+  }).format(value ?? 0);
+}
+
 export function formatMoney(minor: number, currency = "USD") {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -22,4 +29,14 @@ export function formatDateTime(value?: string | null) {
 export function formatDelta(value: number) {
   const formatted = formatUnits(Math.abs(value));
   return value < 0 ? `-${formatted}` : `+${formatted}`;
+}
+
+export function truncateId(value?: string | null, start = 8, end = 4) {
+  if (!value) {
+    return "-";
+  }
+  if (value.length <= start + end + 3) {
+    return value;
+  }
+  return `${value.slice(0, start)}...${value.slice(-end)}`;
 }

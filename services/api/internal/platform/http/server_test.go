@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/slai/slai/services/api/internal/auth"
+	"github.com/slai/slai/services/api/internal/config"
 	"github.com/slai/slai/services/api/internal/ledger"
 	platformdb "github.com/slai/slai/services/api/internal/platform/db"
 	httpserver "github.com/slai/slai/services/api/internal/platform/http"
@@ -130,6 +131,101 @@ func TestAdminOnlyAccessAndPackageCreation(t *testing.T) {
 	packagesList := public.JSON["packages"].([]any)
 	if len(packagesList) != 1 {
 		t.Fatalf("public packages len = %d", len(packagesList))
+	}
+}
+
+func TestAdminDashboardRequiresAdminAndReturnsMetrics(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	client := newTestClient(t)
+	adminUser := createUser(t, "admin@example.com", users.RoleAdmin)
+	user := createUser(t, "user@example.com", users.RoleUser)
+	adminCookies := loginCookies(t, client, adminUser.Email)
+	userCookies := loginCookies(t, client, user.Email)
+
+	forbidden := client.get(t, "/v1/admin/dashboard", userCookies)
+	assertStatus(t, forbidden, http.StatusForbidden)
+
+	topup := client.post(t, "/v1/admin/payments/manual-topup", map[string]any{
+		"userId":      user.ID,
+		"amountMinor": 2500,
+		"currency":    "USD",
+		"creditUnits": 25000,
+	}, adminCookies)
+	assertStatus(t, topup, http.StatusCreated)
+
+	created := client.post(t, "/v1/api-key", map[string]any{"name": "Default"}, userCookies)
+	assertStatus(t, created, http.StatusCreated)
+	raw := stringField(t, created.JSON, "raw_api_key")
+	keyID := stringField(t, created.JSON, "api_key.id")
+
+	ingested := client.post(t, "/v1/internal/usage/mock-event", map[string]any{
+		"api_key_id":        keyID,
+		"external_event_id": "dashboard-mock-001",
+		"model":             "gpt-5.5",
+		"provider":          "openai",
+		"input_tokens":      1001,
+		"output_tokens":     1,
+		"occurred_at":       "2026-04-28T10:00:00Z",
+	}, adminCookies)
+	assertStatus(t, ingested, http.StatusCreated)
+
+	dashboard := client.get(t, "/v1/admin/dashboard", adminCookies)
+	assertStatus(t, dashboard, http.StatusOK)
+
+	for _, group := range []string{"users", "credits", "revenue", "api_keys", "usage", "sync_status"} {
+		if _, ok := dashboard.JSON[group].(map[string]any); !ok {
+			t.Fatalf("dashboard missing group %s: %#v", group, dashboard.JSON[group])
+		}
+	}
+	if got := numberField(t, dashboard.JSON, "users.total"); got != 2 {
+		t.Fatalf("users.total = %v", got)
+	}
+	if got := numberField(t, dashboard.JSON, "credits.total_purchased_units"); got != 25000 {
+		t.Fatalf("credits.total_purchased_units = %v", got)
+	}
+	if got := numberField(t, dashboard.JSON, "revenue.total_paid_minor"); got != 2500 {
+		t.Fatalf("revenue.total_paid_minor = %v", got)
+	}
+	if got := stringField(t, dashboard.JSON, "revenue.currency"); got != "USD" {
+		t.Fatalf("revenue.currency = %q", got)
+	}
+	if got := numberField(t, dashboard.JSON, "api_keys.active"); got != 1 {
+		t.Fatalf("api_keys.active = %v", got)
+	}
+	if got := numberField(t, dashboard.JSON, "usage.total_events"); got != 1 {
+		t.Fatalf("usage.total_events = %v", got)
+	}
+	if got := numberField(t, dashboard.JSON, "usage.billed_events"); got != 1 {
+		t.Fatalf("usage.billed_events = %v", got)
+	}
+
+	recentPayments := dashboard.JSON["recent_payments"].([]any)
+	if len(recentPayments) != 1 {
+		t.Fatalf("recent_payments len = %d", len(recentPayments))
+	}
+	if got := recentPayments[0].(map[string]any)["user_email"]; got != user.Email {
+		t.Fatalf("recent payment user_email = %#v", got)
+	}
+	recentUsage := dashboard.JSON["recent_usage"].([]any)
+	if len(recentUsage) != 1 {
+		t.Fatalf("recent_usage len = %d", len(recentUsage))
+	}
+	if got := recentUsage[0].(map[string]any)["user_email"]; got != user.Email {
+		t.Fatalf("recent usage user_email = %#v", got)
+	}
+	recentAudit := dashboard.JSON["recent_audit_logs"].([]any)
+	if len(recentAudit) == 0 {
+		t.Fatal("expected recent audit logs")
+	}
+	if got := recentAudit[0].(map[string]any)["admin_email"]; got != adminUser.Email {
+		t.Fatalf("recent audit admin_email = %#v", got)
+	}
+
+	for _, forbidden := range []string{"password_hash", "token_hash", "key_hash", "raw_api_key", raw, "API_KEY_PEPPER", "OMNIROUTE_MANAGEMENT_TOKEN"} {
+		if strings.Contains(dashboard.Body, forbidden) {
+			t.Fatalf("dashboard leaked %q: %s", forbidden, dashboard.Body)
+		}
 	}
 }
 
@@ -652,6 +748,19 @@ func TestAdminUsageSyncStatusAndManualSyncUpdatesStatus(t *testing.T) {
 	if got := boolField(t, before.JSON, "sync_status.worker_enabled"); got {
 		t.Fatal("worker should be disabled in tests")
 	}
+	statusBefore := before.JSON["sync_status"].(map[string]any)
+	if got := statusBefore["omniroute_enabled"]; got != false {
+		t.Fatalf("omniroute_enabled = %#v, want false", got)
+	}
+	if got := statusBefore["sync_mode"]; got != "call_logs" {
+		t.Fatalf("sync_mode = %#v, want call_logs", got)
+	}
+	if got := statusBefore["worker_interval_seconds"]; got != float64(60) {
+		t.Fatalf("worker_interval_seconds = %#v, want 60", got)
+	}
+	if got := statusBefore["batch_limit"]; got != float64(100) {
+		t.Fatalf("batch_limit = %#v, want 100", got)
+	}
 
 	response := client.post(t, "/v1/admin/usage/sync", map[string]any{}, adminCookies)
 	assertStatus(t, response, http.StatusNotImplemented)
@@ -706,6 +815,18 @@ func newTestClient(t *testing.T) testClient {
 		SessionTTL:       time.Hour,
 		APIKeyPepper:     "test-api-key-pepper",
 		APIKeyPrefix:     "sk_slai",
+		OmniRoute: config.OmniRouteConfig{
+			Enabled:       false,
+			UsageSyncMode: "call_logs",
+			CallLogLimit:  100,
+		},
+		UsageSyncWorker: config.UsageSyncWorkerConfig{
+			Enabled:    false,
+			Interval:   60 * time.Second,
+			LockKey:    "slai_usage_sync",
+			BatchLimit: 100,
+			StartDelay: 10 * time.Second,
+		},
 	}, testDB, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	return testClient{
