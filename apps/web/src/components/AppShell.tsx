@@ -13,6 +13,7 @@ type AppShellProps = {
   children: React.ReactNode;
   section?: "dashboard" | "admin" | "public";
   user?: User | null;
+  logoutRedirect?: string;
 };
 
 const navItems = {
@@ -38,14 +39,14 @@ const navItems = {
   ]
 };
 
-export function AppShell({ children, section = "public", user }: AppShellProps) {
+export function AppShell({ children, section = "public", user, logoutRedirect }: AppShellProps) {
   const pathname = usePathname();
   const router = useRouter();
   const items = navItems[section];
 
   async function logout() {
     await api.auth.logout();
-    router.push("/login");
+    router.push(logoutRedirect ?? (section === "admin" ? "/admin/login" : "/login"));
     router.refresh();
   }
 
