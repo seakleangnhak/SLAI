@@ -133,6 +133,195 @@ func TestAdminOnlyAccessAndPackageCreation(t *testing.T) {
 	}
 }
 
+func TestAdminUsersListRequiresAdminAndSupportsFilters(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	client := newTestClient(t)
+	adminUser := createUser(t, "admin@example.com", users.RoleAdmin)
+	developer := createUser(t, "developer@example.com", users.RoleUser)
+	suspended := createUser(t, "blocked@example.com", users.RoleUser)
+	adminCookies := loginCookies(t, client, adminUser.Email)
+	userCookies := loginCookies(t, client, developer.Email)
+
+	if _, err := testDB.Exec(context.Background(), `UPDATE users SET status = $2 WHERE id = $1`, suspended.ID, users.StatusSuspended); err != nil {
+		t.Fatal(err)
+	}
+
+	createdKey := client.post(t, "/v1/api-key", map[string]any{"name": "Default"}, userCookies)
+	assertStatus(t, createdKey, http.StatusCreated)
+
+	topup := client.post(t, "/v1/admin/payments/manual-topup", map[string]any{
+		"userId":      developer.ID,
+		"amountMinor": 1000,
+		"currency":    "USD",
+		"creditUnits": 5000,
+	}, adminCookies)
+	assertStatus(t, topup, http.StatusCreated)
+
+	forbidden := client.get(t, "/v1/admin/users", userCookies)
+	assertStatus(t, forbidden, http.StatusForbidden)
+
+	list := client.get(t, "/v1/admin/users?q=dev&status=ACTIVE&role=USER&limit=10&offset=0", adminCookies)
+	assertStatus(t, list, http.StatusOK)
+	if got := numberField(t, list.JSON, "total"); got != 1 {
+		t.Fatalf("total = %v", got)
+	}
+	items := list.JSON["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("items len = %d", len(items))
+	}
+	item := items[0].(map[string]any)
+	if got := item["email"]; got != developer.Email {
+		t.Fatalf("email = %#v", got)
+	}
+	if got := item["balance_units"]; got != float64(5000) {
+		t.Fatalf("balance_units = %#v", got)
+	}
+	if got := item["api_key_status"]; got != "ACTIVE" {
+		t.Fatalf("api_key_status = %#v", got)
+	}
+	if _, ok := item["api_key_prefix"].(string); !ok {
+		t.Fatalf("api_key_prefix missing: %#v", item)
+	}
+
+	suspendedList := client.get(t, "/v1/admin/users?status=SUSPENDED&role=USER", adminCookies)
+	assertStatus(t, suspendedList, http.StatusOK)
+	if got := numberField(t, suspendedList.JSON, "total"); got != 1 {
+		t.Fatalf("suspended total = %v", got)
+	}
+}
+
+func TestAdminUserDetailDoesNotExposeSecretsAndIncludesRelatedData(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	client := newTestClient(t)
+	adminUser := createUser(t, "admin@example.com", users.RoleAdmin)
+	user := createUser(t, "user@example.com", users.RoleUser)
+	adminCookies := loginCookies(t, client, adminUser.Email)
+	userCookies := loginCookies(t, client, user.Email)
+
+	topup := client.post(t, "/v1/admin/payments/manual-topup", map[string]any{
+		"userId":      user.ID,
+		"amountMinor": 2500,
+		"currency":    "USD",
+		"creditUnits": 25000,
+	}, adminCookies)
+	assertStatus(t, topup, http.StatusCreated)
+
+	created := client.post(t, "/v1/api-key", map[string]any{"name": "Default"}, userCookies)
+	assertStatus(t, created, http.StatusCreated)
+	raw := stringField(t, created.JSON, "raw_api_key")
+	keyID := stringField(t, created.JSON, "api_key.id")
+
+	ingested := client.post(t, "/v1/internal/usage/mock-event", map[string]any{
+		"api_key_id":        keyID,
+		"external_event_id": "detail-mock-001",
+		"model":             "gpt-5.5",
+		"provider":          "openai",
+		"input_tokens":      1001,
+		"output_tokens":     1,
+		"occurred_at":       "2026-04-28T10:00:00Z",
+	}, adminCookies)
+	assertStatus(t, ingested, http.StatusCreated)
+
+	detail := client.get(t, "/v1/admin/users/"+user.ID, adminCookies)
+	assertStatus(t, detail, http.StatusOK)
+	for _, forbidden := range []string{"password_hash", "token_hash", "key_hash", "raw_api_key", raw, "API_KEY_PEPPER", "OMNIROUTE_MANAGEMENT_TOKEN"} {
+		if strings.Contains(detail.Body, forbidden) {
+			t.Fatalf("admin user detail leaked %q: %s", forbidden, detail.Body)
+		}
+	}
+	if got := stringField(t, detail.JSON, "email"); got != user.Email {
+		t.Fatalf("email = %q", got)
+	}
+	if got := numberField(t, detail.JSON, "balance.lifetime_purchased_units"); got != 25000 {
+		t.Fatalf("lifetime_purchased_units = %v", got)
+	}
+	if got := stringField(t, detail.JSON, "api_key.status"); got != "ACTIVE" {
+		t.Fatalf("api key status = %q", got)
+	}
+	if len(detail.JSON["recent_usage"].([]any)) != 1 {
+		t.Fatalf("recent_usage = %#v", detail.JSON["recent_usage"])
+	}
+	if len(detail.JSON["recent_payments"].([]any)) != 1 {
+		t.Fatalf("recent_payments = %#v", detail.JSON["recent_payments"])
+	}
+	if len(detail.JSON["recent_ledger"].([]any)) < 2 {
+		t.Fatalf("recent_ledger = %#v", detail.JSON["recent_ledger"])
+	}
+}
+
+func TestAdminUserStatusSuspendAuditsAndSuspendsAPIKey(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	client := newTestClient(t)
+	adminUser := createUser(t, "admin@example.com", users.RoleAdmin)
+	user := createUser(t, "user@example.com", users.RoleUser)
+	adminCookies := loginCookies(t, client, adminUser.Email)
+	userCookies := loginCookies(t, client, user.Email)
+
+	created := client.post(t, "/v1/api-key", map[string]any{"name": "Default"}, userCookies)
+	assertStatus(t, created, http.StatusCreated)
+
+	updated := client.patch(t, "/v1/admin/users/"+user.ID+"/status", map[string]any{"status": "SUSPENDED"}, adminCookies)
+	assertStatus(t, updated, http.StatusOK)
+	if got := stringField(t, updated.JSON, "status"); got != users.StatusSuspended {
+		t.Fatalf("status = %q", got)
+	}
+	if got := stringField(t, updated.JSON, "api_key.status"); got != "SUSPENDED" {
+		t.Fatalf("api key status = %q", got)
+	}
+
+	var auditCount int
+	if err := testDB.QueryRow(context.Background(), `SELECT count(*) FROM admin_audit_logs WHERE admin_id = $1 AND action = 'user_status_updated'`, adminUser.ID).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("audit count = %d", auditCount)
+	}
+
+	var keyStatus string
+	if err := testDB.QueryRow(context.Background(), `SELECT status FROM api_keys WHERE user_id = $1`, user.ID).Scan(&keyStatus); err != nil {
+		t.Fatal(err)
+	}
+	if keyStatus != "SUSPENDED" {
+		t.Fatalf("db api key status = %q", keyStatus)
+	}
+}
+
+func TestAdminUserStatusActivateDoesNotResumeAPIKey(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	client := newTestClient(t)
+	adminUser := createUser(t, "admin@example.com", users.RoleAdmin)
+	user := createUser(t, "user@example.com", users.RoleUser)
+	adminCookies := loginCookies(t, client, adminUser.Email)
+	userCookies := loginCookies(t, client, user.Email)
+
+	created := client.post(t, "/v1/api-key", map[string]any{"name": "Default"}, userCookies)
+	assertStatus(t, created, http.StatusCreated)
+
+	suspended := client.patch(t, "/v1/admin/users/"+user.ID+"/status", map[string]any{"status": "SUSPENDED"}, adminCookies)
+	assertStatus(t, suspended, http.StatusOK)
+
+	activated := client.patch(t, "/v1/admin/users/"+user.ID+"/status", map[string]any{"status": "ACTIVE"}, adminCookies)
+	assertStatus(t, activated, http.StatusOK)
+	if got := stringField(t, activated.JSON, "status"); got != users.StatusActive {
+		t.Fatalf("status = %q", got)
+	}
+	if got := stringField(t, activated.JSON, "api_key.status"); got != "SUSPENDED" {
+		t.Fatalf("api key should not auto-resume, got %q", got)
+	}
+
+	var auditCount int
+	if err := testDB.QueryRow(context.Background(), `SELECT count(*) FROM admin_audit_logs WHERE admin_id = $1 AND action = 'user_status_updated'`, adminUser.ID).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 2 {
+		t.Fatalf("audit count = %d", auditCount)
+	}
+}
+
 func TestManualTopUpLedgerMutationAndBalanceUpdate(t *testing.T) {
 	requireDB(t)
 	truncateTables(t)
@@ -449,6 +638,23 @@ func (c testClient) postWithHeaders(t *testing.T, path string, payload any, cook
 	for key, value := range headers {
 		req.Header.Set(key, value)
 	}
+	for _, cookie := range cookies {
+		req.AddCookie(cookie)
+	}
+	return c.do(t, req)
+}
+
+func (c testClient) patch(t *testing.T, path string, payload any, cookies []*http.Cookie) testResponse {
+	t.Helper()
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPatch, c.server.URL+path, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
 	for _, cookie := range cookies {
 		req.AddCookie(cookie)
 	}

@@ -160,6 +160,104 @@ export type UsageFilter = {
   offset?: number;
 };
 
+export type AdminUserFilter = {
+  q?: string;
+  status?: UserStatus | "";
+  role?: Role | "";
+  limit?: number;
+  offset?: number;
+};
+
+export type AdminUserListItem = {
+  id: string;
+  email: string;
+  role: Role;
+  status: UserStatus;
+  balance_units: number;
+  lifetime_purchased_units: number;
+  lifetime_used_units: number;
+  api_key_status?: APIKeyStatus | null;
+  api_key_prefix?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AdminUserListResponse = {
+  items: AdminUserListItem[];
+  limit: number;
+  offset: number;
+  total: number;
+};
+
+export type AdminBalance = {
+  available_units: number;
+  lifetime_purchased_units: number;
+  lifetime_used_units: number;
+  version: number;
+  updated_at: string;
+};
+
+export type AdminUsageEvent = {
+  id: string;
+  api_key_id: string;
+  external_source: string;
+  external_event_id: string;
+  omniroute_key_id?: string | null;
+  model?: string | null;
+  provider?: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cost_units: number;
+  status: string;
+  occurred_at: string;
+  created_at: string;
+};
+
+export type AdminLedgerEntry = {
+  id: string;
+  type: string;
+  source: string;
+  delta_units: number;
+  balance_after_units: number;
+  payment_id?: string | null;
+  usage_event_id?: string | null;
+  admin_id?: string | null;
+  idempotency_key?: string | null;
+  reason?: string | null;
+  created_at: string;
+};
+
+export type AdminPayment = {
+  id: string;
+  package_id?: string | null;
+  provider: string;
+  provider_ref?: string | null;
+  amount_minor: number;
+  currency: string;
+  credit_units: number;
+  status: string;
+  admin_id?: string | null;
+  note?: string | null;
+  created_at: string;
+  paid_at?: string | null;
+};
+
+export type AdminUserDetail = {
+  id: string;
+  email: string;
+  role: Role;
+  status: UserStatus;
+  balance: AdminBalance;
+  api_key?: AdminAPIKey | null;
+  recent_usage: AdminUsageEvent[];
+  recent_ledger: AdminLedgerEntry[];
+  recent_payments: AdminPayment[];
+  created_at: string;
+  updated_at: string;
+};
+
+
 export class ApiError extends Error {
   status: number;
   code?: string;
@@ -274,6 +372,16 @@ export const api = {
     revoke: () => apiFetch<{ api_key: PublicAPIKey }>("/v1/api-key", { method: "DELETE" })
   },
   admin: {
+    users: {
+      list: (filter: AdminUserFilter = {}) =>
+        apiFetch<AdminUserListResponse>(`/v1/admin/users${toQuery(filter)}`),
+      get: (userId: string) => apiFetch<AdminUserDetail>(`/v1/admin/users/${userId}`),
+      updateStatus: (userId: string, status: UserStatus) =>
+        apiFetch<AdminUserDetail>(`/v1/admin/users/${userId}/status`, {
+          method: "PATCH",
+          body: { status }
+        })
+    },
     packages: {
       list: () => apiFetch<{ packages: CreditPackage[] }>("/v1/admin/packages"),
       create: (input: PackageInput) =>

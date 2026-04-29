@@ -120,6 +120,9 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 	mux.HandleFunc("POST /v1/admin/usage/sync", server.adminSyncUsage)
 	mux.HandleFunc("GET /v1/admin/usage/sync-status", server.adminUsageSyncStatus)
 	mux.HandleFunc("GET /v1/admin/usage", server.adminListUsage)
+	mux.HandleFunc("GET /v1/admin/users", server.adminListUsers)
+	mux.HandleFunc("GET /v1/admin/users/{id}", server.adminGetUser)
+	mux.HandleFunc("PATCH /v1/admin/users/{id}/status", server.adminUpdateUserStatus)
 	mux.HandleFunc("GET /v1/admin/users/{id}/api-key", server.adminGetUserAPIKey)
 	mux.HandleFunc("POST /v1/admin/users/{id}/api-key/suspend", server.adminSuspendUserAPIKey)
 	mux.HandleFunc("POST /v1/admin/users/{id}/api-key/resume", server.adminResumeUserAPIKey)
@@ -569,6 +572,104 @@ func (s *Server) adminLedgerAdjustment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, result)
+}
+
+func (s *Server) adminListUsers(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+
+	filter := users.AdminListFilter{
+		Query:  r.URL.Query().Get("q"),
+		Status: r.URL.Query().Get("status"),
+		Role:   r.URL.Query().Get("role"),
+		Limit:  queryLimit(r, 50),
+		Offset: queryOffset(r),
+	}
+	result, err := users.NewAdminRepository(s.db).List(r.Context(), filter)
+	if err != nil {
+		if errors.Is(err, users.ErrInvalidAdminUserFilter) {
+			writeError(w, http.StatusBadRequest, "invalid_user_filter", err)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "admin_users_failed", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) adminGetUser(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+
+	detail, err := users.NewAdminRepository(s.db).GetDetail(r.Context(), r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, users.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "user_not_found", err)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "admin_user_failed", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
+}
+
+func (s *Server) adminUpdateUserStatus(w http.ResponseWriter, r *http.Request) {
+	adminUser, ok := s.requireAdmin(w, r)
+	if !ok {
+		return
+	}
+
+	var req users.AdminStatusUpdateInput
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	req.Status = strings.ToUpper(strings.TrimSpace(req.Status))
+
+	var updated users.User
+	err := platformdb.InTx(r.Context(), s.db, func(tx pgx.Tx) error {
+		previousStatus, user, err := users.NewAdminRepository(tx).UpdateStatus(r.Context(), r.PathValue("id"), req.Status)
+		if err != nil {
+			return err
+		}
+		targetType := "user"
+		targetID := user.ID
+		if err := admin.NewAuditLogger(tx).Log(r.Context(), adminUser.ID, "user_status_updated", &targetType, &targetID, map[string]any{
+			"previousStatus": previousStatus,
+			"status":         user.Status,
+		}); err != nil {
+			return err
+		}
+		updated = user
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, users.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "user_not_found", err)
+			return
+		}
+		if errors.Is(err, users.ErrInvalidAdminUserFilter) {
+			writeError(w, http.StatusBadRequest, "invalid_user_status", err)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "user_status_failed", err)
+		return
+	}
+
+	if updated.Status == users.StatusSuspended {
+		if _, err := s.apiKeyService.SuspendAPIKey(r.Context(), updated.ID); err != nil && !errors.Is(err, apikeys.ErrNotFound) {
+			writeAPIKeyError(w, err)
+			return
+		}
+	}
+
+	detail, err := users.NewAdminRepository(s.db).GetDetail(r.Context(), updated.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "admin_user_failed", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
 }
 
 func (s *Server) adminGetUserAPIKey(w http.ResponseWriter, r *http.Request) {
