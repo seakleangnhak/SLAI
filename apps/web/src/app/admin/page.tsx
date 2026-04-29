@@ -1,55 +1,83 @@
-import { AppShell } from "@/components/AppShell";
-import { MetricCard } from "@/components/MetricCard";
+"use client";
 
-const rows = [
-  { user: "developer@example.com", action: "Manual top-up", amount: "$50.00", status: "pending" },
-  { user: "team@example.com", action: "Usage sync", amount: "12,800 credits", status: "billed" }
+import Link from "next/link";
+import { useEffect, useState } from "react";
+
+import { AdminShell } from "@/components/AdminShell";
+import { Badge } from "@/components/Badge";
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/Card";
+import { ErrorState } from "@/components/ErrorState";
+import { LoadingState } from "@/components/LoadingState";
+import { MetricCard } from "@/components/MetricCard";
+import { api, readableError, type SyncStatus, type UsageEvent } from "@/lib/api";
+import { formatDateTime, formatUnits } from "@/lib/format";
+
+const links = [
+  { href: "/admin/users", label: "Users", description: "Open a user by ID for key actions and top-ups." },
+  { href: "/admin/packages", label: "Packages", description: "Create and edit public prepaid packages." },
+  { href: "/admin/usage", label: "Usage", description: "Inspect billed and ignored usage events." },
+  { href: "/admin/sync", label: "Sync status", description: "Trigger manual sync and inspect worker state." }
 ];
 
 export default function AdminPage() {
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  const [usage, setUsage] = useState<UsageEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  function load() {
+    setLoading(true);
+    setError(null);
+    Promise.all([api.admin.usage.syncStatus(), api.admin.usage.list({ limit: 5 })])
+      .then(([status, usageResponse]) => {
+        setSyncStatus(status.sync_status);
+        setUsage(usageResponse.usage);
+      })
+      .catch((err) => setError(readableError(err)))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(load, []);
+
   return (
-    <AppShell section="admin">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-cyan-700">Admin console</p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-normal text-slate-950">Operations</h1>
-        </div>
-        <button className="rounded-md bg-slate-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">Create top-up</button>
+    <AdminShell>
+      <div>
+        <p className="text-sm font-semibold uppercase tracking-[0.18em] text-cyan-700">Admin console</p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-normal text-slate-950">Operations</h1>
       </div>
 
+      {loading ? <div className="mt-8"><LoadingState label="Loading admin overview" /></div> : null}
+      {error ? <div className="mt-8"><ErrorState message={error} onRetry={load} /></div> : null}
+
       <section className="mt-8 grid gap-4 md:grid-cols-3">
-        <MetricCard label="Users" value="0" hint="Active accounts" />
-        <MetricCard label="Manual top-ups" value="0" hint="MVP payment flow" />
-        <MetricCard label="Usage events" value="0" hint="Idempotent ingestion" />
+        <MetricCard label="Worker" value={syncStatus?.worker_enabled ? "Enabled" : "Disabled"} hint={syncStatus?.currently_running ? "Currently running" : "Idle"} />
+        <MetricCard label="Last billed" value={formatUnits(syncStatus?.last_result?.billed ?? 0)} hint="Most recent sync result" />
+        <MetricCard label="Recent usage" value={formatUnits(usage.length)} hint="Latest admin usage rows loaded" />
       </section>
 
-      <section className="mt-8 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-200 px-5 py-4">
-          <h2 className="text-base font-semibold text-slate-950">Recent activity</h2>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200 text-sm">
-            <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
-              <tr>
-                <th className="px-5 py-3">User</th>
-                <th className="px-5 py-3">Action</th>
-                <th className="px-5 py-3">Amount</th>
-                <th className="px-5 py-3">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 bg-white text-slate-700">
-              {rows.map((row) => (
-                <tr key={`${row.user}-${row.action}`}>
-                  <td className="whitespace-nowrap px-5 py-4 font-medium text-slate-950">{row.user}</td>
-                  <td className="whitespace-nowrap px-5 py-4">{row.action}</td>
-                  <td className="whitespace-nowrap px-5 py-4">{row.amount}</td>
-                  <td className="whitespace-nowrap px-5 py-4">{row.status}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {links.map((item) => (
+          <Link key={item.href} href={item.href} className="block rounded-lg border border-slate-200 bg-white p-5 shadow-sm hover:border-cyan-200 hover:bg-cyan-50">
+            <h2 className="text-base font-semibold text-slate-950">{item.label}</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-500">{item.description}</p>
+          </Link>
+        ))}
       </section>
-    </AppShell>
+
+      <Card className="mt-8">
+        <CardHeader>
+          <div>
+            <CardTitle>Sync snapshot</CardTitle>
+            <CardDescription>Manual sync and worker sync update this in-memory status.</CardDescription>
+          </div>
+          <Badge tone={syncStatus?.last_error ? "red" : "green"}>{syncStatus?.last_error ? "Error" : "OK"}</Badge>
+        </CardHeader>
+        <dl className="grid gap-4 text-sm md:grid-cols-3">
+          <div><dt className="font-medium text-slate-500">Last success</dt><dd className="mt-1 text-slate-950">{formatDateTime(syncStatus?.last_success_at)}</dd></div>
+          <div><dt className="font-medium text-slate-500">Last finished</dt><dd className="mt-1 text-slate-950">{formatDateTime(syncStatus?.last_finished_at)}</dd></div>
+          <div><dt className="font-medium text-slate-500">Next run</dt><dd className="mt-1 text-slate-950">{formatDateTime(syncStatus?.next_run_at)}</dd></div>
+        </dl>
+      </Card>
+    </AdminShell>
   );
 }
