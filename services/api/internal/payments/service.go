@@ -27,6 +27,55 @@ func NewService(pool *pgxpool.Pool) Service {
 	return Service{pool: pool}
 }
 
+func (s Service) ListForUser(ctx context.Context, userID string, limit int, offset int) ([]Payment, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT id::text, user_id::text, package_id::text, provider, provider_ref, amount_minor, currency,
+		       credit_units, status, admin_id::text, note, created_at, paid_at
+		FROM payments
+		WHERE user_id = $1
+		ORDER BY paid_at DESC NULLS LAST, created_at DESC
+		LIMIT $2 OFFSET $3
+	`, userID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list user payments: %w", err)
+	}
+	defer rows.Close()
+
+	items := []Payment{}
+	for rows.Next() {
+		var payment Payment
+		if err := rows.Scan(
+			&payment.ID,
+			&payment.UserID,
+			&payment.PackageID,
+			&payment.Provider,
+			&payment.ProviderRef,
+			&payment.AmountMinor,
+			&payment.Currency,
+			&payment.CreditUnits,
+			&payment.Status,
+			&payment.AdminID,
+			&payment.Note,
+			&payment.CreatedAt,
+			&payment.PaidAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan user payment: %w", err)
+		}
+		items = append(items, payment)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate user payments: %w", err)
+	}
+	return items, nil
+}
+
 type ManualTopUpResult struct {
 	Payment Payment        `json:"payment"`
 	Ledger  ledger.Entry   `json:"ledger"`

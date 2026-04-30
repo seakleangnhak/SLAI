@@ -4,24 +4,35 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
+import { AuthCard, AuthErrorAlert, AuthInput, AuthPageShell, AuthPasswordInput, SecurityNote } from "@/components/AuthPage";
 import { Button } from "@/components/Button";
-import { Card } from "@/components/Card";
-import { Input } from "@/components/Input";
 import { api, readableError } from "@/lib/api";
+
+type SignupErrors = {
+  email?: string;
+  password?: string;
+};
 
 export default function SignupPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<SignupErrors>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    const validation = validateSignup(email, password);
+    setFieldErrors(validation);
+    if (Object.keys(validation).length > 0) {
+      return;
+    }
+
     setLoading(true);
     setError(null);
     try {
-      await api.auth.signup(email, password);
+      await api.auth.signup(email.trim(), password);
       router.push("/dashboard");
       router.refresh();
     } catch (err) {
@@ -32,33 +43,74 @@ export default function SignupPage() {
   }
 
   return (
-    <main className="grid min-h-screen place-items-center bg-[#f7f8fb] px-4 py-12 text-slate-950">
-      <Card className="w-full max-w-md">
-        <Link href="/" className="flex items-center gap-3">
-          <span className="grid size-8 place-items-center rounded-md bg-slate-950 text-sm font-semibold text-white">S</span>
-          <span className="text-sm font-semibold tracking-[0.18em] text-slate-900">SLAI</span>
-        </Link>
-        <h1 className="mt-8 text-2xl font-semibold tracking-normal text-slate-950">Create account</h1>
-        <p className="mt-2 text-sm text-slate-500">Signup creates a user and an empty ledger-backed credit balance.</p>
-        <form className="mt-6 space-y-4" onSubmit={submit}>
-          <Input label="Email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
-          <Input
-            label="Password"
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            minLength={8}
-            required
+    <AuthPageShell>
+      <AuthCard
+        title="Create account"
+        subtitle="Create your SLAI developer account and start with an empty ledger-backed balance."
+        footer={
+          <>
+            <p>
+              Already have an account? <Link className="font-semibold text-blue-700 hover:text-blue-800" href="/login">Sign in</Link>
+            </p>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+              <Link className="font-semibold text-slate-700 hover:text-slate-950" href="/">Back to home</Link>
+            </div>
+          </>
+        }
+      >
+        <form className="mt-7 space-y-5" onSubmit={submit} noValidate>
+          {error ? <AuthErrorAlert message={error} /> : null}
+          <AuthInput
+            autoComplete="email"
+            disabled={loading}
+            error={fieldErrors.email}
+            label="Email"
+            onChange={(event) => {
+              setEmail(event.target.value);
+              setFieldErrors((current) => ({ ...current, email: undefined }));
+            }}
+            placeholder="name@company.com"
+            type="email"
+            value={email}
           />
-          {error ? <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p> : null}
-          <Button className="w-full" type="submit" disabled={loading}>
-            {loading ? "Creating account" : "Create account"}
+          <AuthPasswordInput
+            autoComplete="new-password"
+            disabled={loading}
+            error={fieldErrors.password}
+            label="Password"
+            minLength={8}
+            onChange={(event) => {
+              setPassword(event.target.value);
+              setFieldErrors((current) => ({ ...current, password: undefined }));
+            }}
+            placeholder="Enter your password"
+            value={password}
+          />
+          <Button className="h-12 w-full rounded-xl bg-slate-950 text-base shadow-sm hover:bg-slate-800" type="submit" disabled={loading}>
+            {loading ? "Creating account..." : "Create account"}
           </Button>
         </form>
-        <p className="mt-5 text-sm text-slate-500">
-          Already have an account? <Link className="font-semibold text-cyan-700" href="/login">Sign in</Link>
-        </p>
-      </Card>
-    </main>
+        <SecurityNote />
+      </AuthCard>
+    </AuthPageShell>
   );
+}
+
+function validateSignup(email: string, password: string): SignupErrors {
+  const errors: SignupErrors = {};
+  if (!email.trim()) {
+    errors.email = "Email is required.";
+  } else if (!looksLikeEmail(email)) {
+    errors.email = "Enter a valid email address.";
+  }
+  if (!password) {
+    errors.password = "Password is required.";
+  } else if (password.length < 8) {
+    errors.password = "Password must be at least 8 characters.";
+  }
+  return errors;
+}
+
+function looksLikeEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 }

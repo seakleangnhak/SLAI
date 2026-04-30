@@ -13,7 +13,7 @@ import { LoadingState } from "@/components/LoadingState";
 import { Table, Td, Th } from "@/components/Table";
 import { api, readableError, type AdminDashboard, type AdminDashboardUsage } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { formatDateTime, formatMoney, formatUnits } from "@/lib/format";
+import { formatCompactCredits, formatCredits, formatDateTime, formatMoney, formatUnits } from "@/lib/format";
 
 const rangeOptions = ["24h", "7d", "30d"];
 
@@ -113,13 +113,13 @@ export default function AdminPage() {
             <OverviewMetricCard
               icon="C"
               label="Credits"
-              value={formatCompact(dashboard.credits.total_available_units)}
+              value={formatCompactCredits(dashboard.credits.total_available_units)}
               hint="Available across all users"
               footer={
                 <div className="border-t border-slate-100 pt-3">
                   <div className="grid grid-cols-2 gap-2 text-xs">
-                    <MetricSubValue label="Purchased" tone="green" value={dashboard.credits.total_purchased_units} />
-                    <MetricSubValue label="Used" tone="red" value={dashboard.credits.total_used_units} />
+                    <MetricSubValue label="Purchased" tone="green" value={dashboard.credits.total_purchased_units} formatValue={formatCompactCredits} />
+                    <MetricSubValue label="Used" tone="red" value={dashboard.credits.total_used_units} formatValue={formatCompactCredits} />
                   </div>
                   {dashboard.credits.total_purchased_units > 0 ? (
                     <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-100">
@@ -207,7 +207,7 @@ function OverviewMetricCard({
   );
 }
 
-function MetricSubValue({ label, value, tone = "neutral" }: { label: string; value: number; tone?: "neutral" | "green" | "red" | "yellow" }) {
+function MetricSubValue({ label, value, tone = "neutral", formatValue = formatCompact }: { label: string; value: number; tone?: "neutral" | "green" | "red" | "yellow"; formatValue?: (value: number | null | undefined) => string }) {
   const toneClass = {
     neutral: "text-slate-800",
     green: "text-emerald-700",
@@ -218,7 +218,7 @@ function MetricSubValue({ label, value, tone = "neutral" }: { label: string; val
   return (
     <div>
       <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400">{label}</div>
-      <div className={cn("mt-1 font-mono text-xs font-semibold", toneClass)}>{formatCompact(value)}</div>
+      <div className={cn("mt-1 font-mono text-xs font-semibold", toneClass)}>{formatValue(value)}</div>
     </div>
   );
 }
@@ -239,8 +239,8 @@ function UsageActivityCard({ usage, totalTokens, totalCost }: { usage: AdminDash
             <p className="font-mono font-semibold text-slate-900">{formatCompact(totalTokens)}</p>
           </div>
           <div>
-            <p className="text-slate-400">Cost units</p>
-            <p className="font-mono font-semibold text-slate-900">{formatCompact(totalCost)}</p>
+            <p className="text-slate-400">Credits</p>
+            <p className="font-mono font-semibold text-slate-900">{formatCompactCredits(totalCost)}</p>
           </div>
         </div>
       </CardHeader>
@@ -250,7 +250,7 @@ function UsageActivityCard({ usage, totalTokens, totalCost }: { usage: AdminDash
         <div className="space-y-3">
           <div className="flex h-36 items-end gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
             {usage.map((event) => (
-              <div className="flex min-w-0 flex-1 flex-col items-center gap-2" key={event.id} title={`${event.model ?? "Unknown model"}: ${formatUnits(event.cost_units)} cost units`}>
+              <div className="flex min-w-0 flex-1 flex-col items-center gap-2" key={event.id} title={`${event.model ?? "Unknown model"}: ${formatCredits(event.cost_units)} credits`}>
                 <div className="flex h-24 w-full items-end rounded bg-white ring-1 ring-slate-200">
                   <div
                     className={cn("w-full rounded-b bg-blue-600", event.status !== "billed" && "bg-amber-500")}
@@ -334,7 +334,7 @@ function RecentPaymentsCard({ dashboard }: { dashboard: AdminDashboard }) {
                   <Td className="max-w-40 truncate font-medium text-slate-950">{payment.user_email}</Td>
                   <Td>
                     <div className="font-mono text-slate-900">{formatMoney(payment.amount_minor, payment.currency)}</div>
-                    <div className="text-xs text-slate-500">{formatCompact(payment.credit_units)} credits</div>
+                    <div className="text-xs text-slate-500">{formatCompactCredits(payment.credit_units)} credits</div>
                   </Td>
                   <Td>
                     <Badge tone={payment.status === "paid" ? "green" : "neutral"}>{payment.status}</Badge>
@@ -375,7 +375,7 @@ function RecentUsageCard({ usage }: { usage: AdminDashboardUsage[] }) {
               </div>
               <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                 <MetricSubValue label="Tokens" value={event.total_tokens} />
-                <MetricSubValue label="Cost" value={event.cost_units} />
+                <MetricSubValue label="Cost" value={event.cost_units} formatValue={formatCompactCredits} />
               </div>
             </div>
           ))}

@@ -190,6 +190,10 @@ func (s Service) syncCallLogs(ctx context.Context, state syncState, limit int) (
 			OccurredAt:      log.OccurredAt,
 			Raw:             log.Raw,
 		}
+		if log.CostUnits != nil {
+			costUnits := *log.CostUnits
+			input.CostUnitsOverride = &costUnits
+		}
 		ingested, err := s.IngestEvent(ctx, input)
 		if err != nil {
 			result.Failed++
@@ -311,7 +315,7 @@ func (s Service) calculateCost(ctx context.Context, tx pgx.Tx, input IngestInput
 		if *input.CostUnitsOverride < 0 {
 			return 0, nil, ErrInvalidUsageEvent
 		}
-		return *input.CostUnitsOverride, map[string]any{"costSource": "omniroute_usage_history"}, nil
+		return *input.CostUnitsOverride, map[string]any{"costSource": "omniroute"}, nil
 	}
 
 	costUnits, pricingRule, err := NewPricingService(tx).CalculateCost(ctx, input.Provider, input.Model, input.InputTokens, input.OutputTokens)

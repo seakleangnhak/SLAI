@@ -53,6 +53,7 @@ type CallLog struct {
 	Provider     string
 	InputTokens  int64
 	OutputTokens int64
+	CostUnits    *int64
 	OccurredAt   time.Time
 	Raw          map[string]any
 }

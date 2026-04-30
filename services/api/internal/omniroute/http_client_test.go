@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/slai/slai/services/api/internal/config"
+	"github.com/slai/slai/services/api/internal/credits"
 )
 
 func TestHTTPClientCreateAPIKeySendsAuthAndMapsResponse(t *testing.T) {
@@ -175,6 +176,7 @@ func TestHTTPClientFetchCallLogsMapsLogs(t *testing.T) {
 			"model":     "gpt-5.5",
 			"provider":  "openai",
 			"tokens":    map[string]any{"in": 7240, "out": 357},
+			"costUsd":   1.25,
 			"timestamp": "2026-04-28T10:00:00Z",
 		}})
 	}))
@@ -190,6 +192,63 @@ func TestHTTPClientFetchCallLogsMapsLogs(t *testing.T) {
 	}
 	if len(logs) != 1 || logs[0].ExternalID != "log-1" || logs[0].APIKeyID != "omni-key-1" || logs[0].InputTokens != 7240 || logs[0].OutputTokens != 357 {
 		t.Fatalf("logs = %#v", logs)
+	}
+	wantCost, err := credits.FromDecimalString("1.25")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if logs[0].CostUnits == nil || *logs[0].CostUnits != wantCost {
+		t.Fatalf("cost units = %#v, want %d", logs[0].CostUnits, wantCost)
+	}
+}
+
+func TestHTTPClientFetchCallLogsMapsSubCentUSDCost(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, []map[string]any{{
+			"id":        "log-1",
+			"apiKeyId":  "omni-key-1",
+			"costUsd":   "0.001",
+			"timestamp": "2026-04-28T10:00:00Z",
+		}})
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server.URL, 0)
+	logs, err := client.FetchCallLogs(context.Background(), nil, 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCost, err := credits.FromDecimalString("0.001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 || logs[0].CostUnits == nil || *logs[0].CostUnits != wantCost {
+		t.Fatalf("logs = %#v, want cost %d", logs, wantCost)
+	}
+}
+
+func TestHTTPClientFetchCallLogsMapsCreditCostUnits(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, []map[string]any{{
+			"id":        "log-1",
+			"apiKeyId":  "omni-key-1",
+			"costUnits": 7,
+			"timestamp": "2026-04-28T10:00:00Z",
+		}})
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server.URL, 0)
+	logs, err := client.FetchCallLogs(context.Background(), nil, 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCost, err := credits.FromDecimalString("7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 || logs[0].CostUnits == nil || *logs[0].CostUnits != wantCost {
+		t.Fatalf("logs = %#v, want cost %d", logs, wantCost)
 	}
 }
 

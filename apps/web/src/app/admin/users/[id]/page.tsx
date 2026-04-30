@@ -14,7 +14,7 @@ import { Input, Textarea } from "@/components/Input";
 import { LoadingState } from "@/components/LoadingState";
 import { api, readableError, type AdminUserDetail, type UserStatus } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { formatCompactUnits, formatDateTime, formatDelta, formatMoney, formatUnits, truncateId } from "@/lib/format";
+import { formatCompactCredits, formatCompactUnits, formatDateTime, formatDelta, formatMoney, truncateId } from "@/lib/format";
 
 export default function AdminUserDetailPage() {
   const params = useParams<{ id: string }>();
@@ -217,9 +217,9 @@ function BalanceCard({ detail }: { detail: AdminUserDetail }) {
         <span className="rounded-md bg-slate-100 px-2 py-1 font-mono text-xs text-slate-600">v{detail.balance.version}</span>
       </CardHeader>
       <div className="grid gap-3 md:grid-cols-3">
-        <BalanceMetric label="Available" value={formatCompactUnits(detail.balance.available_units)} tone="blue" />
-        <BalanceMetric label="Purchased" value={formatCompactUnits(purchased)} tone="green" />
-        <BalanceMetric label="Used" value={formatCompactUnits(used)} tone="red" />
+        <BalanceMetric label="Available" value={formatCompactCredits(detail.balance.available_units)} tone="blue" />
+        <BalanceMetric label="Purchased" value={formatCompactCredits(purchased)} tone="green" />
+        <BalanceMetric label="Used" value={formatCompactCredits(used)} tone="red" />
       </div>
       {purchased > 0 ? (
         <div className="mt-4">
@@ -319,7 +319,7 @@ function TopUpCard({
         </div>
       </CardHeader>
       <form className="space-y-3" onSubmit={onSubmit}>
-        <Input label="Credit units" type="number" min="1" value={credits} onChange={(event) => setCredits(event.target.value)} required />
+        <Input label="Credits" type="number" min="0.000001" step="0.000001" value={credits} onChange={(event) => setCredits(event.target.value)} required />
         <div className="grid grid-cols-[1fr_96px] gap-3">
           <Input label="Amount minor" type="number" min="0" value={amount} onChange={(event) => setAmount(event.target.value)} required />
           <Input label="Currency" value={currency} onChange={(event) => setCurrency(event.target.value)} required />
@@ -371,7 +371,7 @@ function AdjustmentCard({
             ))}
           </div>
         </div>
-        <Input label="Amount units" type="number" min="1" value={units} onChange={(event) => setUnits(event.target.value)} required />
+        <Input label="Credits" type="number" min="0.000001" step="0.000001" value={units} onChange={(event) => setUnits(event.target.value)} required />
         <Textarea label="Reason" value={reason} onChange={(event) => setReason(event.target.value)} required />
         <Button className="w-full" type="submit" variant={adjustType === "debit" ? "danger" : "primary"} disabled={actionLoading || !reason.trim()}>{actionLoading ? "Submitting" : "Create adjustment"}</Button>
       </form>
@@ -389,7 +389,7 @@ function RecentUsage({ detail }: { detail: AdminUserDetail }) {
               <DenseTd>{event.model ?? "-"}</DenseTd>
               <DenseTd>{event.provider ?? "-"}</DenseTd>
               <DenseTd mono>{formatCompactUnits(event.total_tokens)}</DenseTd>
-              <DenseTd mono>{formatCompactUnits(event.cost_units)}</DenseTd>
+              <DenseTd mono>{formatCompactCredits(event.cost_units)}</DenseTd>
               <DenseTd><Badge dot tone={statusTone(event.status)}>{event.status}</Badge></DenseTd>
               <DenseTd>{formatDateTime(event.occurred_at)}</DenseTd>
             </tr>
@@ -409,7 +409,7 @@ function RecentLedger({ detail }: { detail: AdminUserDetail }) {
             <tr className="hover:bg-slate-50" key={entry.id}>
               <DenseTd>{entry.type}</DenseTd>
               <DenseTd mono><span className={entry.delta_units < 0 ? "text-red-700" : "text-emerald-700"}>{formatDelta(entry.delta_units)}</span></DenseTd>
-              <DenseTd mono>{formatCompactUnits(entry.balance_after_units)}</DenseTd>
+              <DenseTd mono>{formatCompactCredits(entry.balance_after_units)}</DenseTd>
               <DenseTd>{entry.reason ?? "-"}</DenseTd>
               <DenseTd>{formatDateTime(entry.created_at)}</DenseTd>
             </tr>
@@ -428,7 +428,7 @@ function RecentPayments({ detail }: { detail: AdminUserDetail }) {
           {detail.recent_payments.map((payment) => (
             <tr className="hover:bg-slate-50" key={payment.id}>
               <DenseTd mono>{formatMoney(payment.amount_minor, payment.currency)}</DenseTd>
-              <DenseTd mono>{formatCompactUnits(payment.credit_units)}</DenseTd>
+              <DenseTd mono>{formatCompactCredits(payment.credit_units)}</DenseTd>
               <DenseTd><Badge dot tone={payment.status === "paid" ? "green" : "neutral"}>{payment.status}</Badge></DenseTd>
               <DenseTd mono>{truncateId(payment.admin_id, 8, 4)}</DenseTd>
               <DenseTd>{formatDateTime(payment.created_at)}</DenseTd>

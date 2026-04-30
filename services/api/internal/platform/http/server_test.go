@@ -582,6 +582,50 @@ func TestManualTopUpLedgerMutationAndBalanceUpdate(t *testing.T) {
 	}
 }
 
+func TestUserPaymentsListScopedToSessionUser(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	client := newTestClient(t)
+	adminUser := createUser(t, "admin@example.com", users.RoleAdmin)
+	user := createUser(t, "payments-user@example.com", users.RoleUser)
+	otherUser := createUser(t, "other-payments-user@example.com", users.RoleUser)
+	adminCookies := loginCookies(t, client, adminUser.Email)
+	userCookies := loginCookies(t, client, user.Email)
+
+	userTopup := client.post(t, "/v1/admin/payments/manual-topup", map[string]any{
+		"userId":      user.ID,
+		"amountMinor": 1200,
+		"currency":    "USD",
+		"creditUnits": 12000,
+		"note":        "wire received",
+	}, adminCookies)
+	assertStatus(t, userTopup, http.StatusCreated)
+	otherTopup := client.post(t, "/v1/admin/payments/manual-topup", map[string]any{
+		"userId":      otherUser.ID,
+		"amountMinor": 900,
+		"currency":    "USD",
+		"creditUnits": 9000,
+	}, adminCookies)
+	assertStatus(t, otherTopup, http.StatusCreated)
+
+	payments := client.get(t, "/v1/payments", userCookies)
+	assertStatus(t, payments, http.StatusOK)
+	items := payments.JSON["payments"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("payments len = %d, want 1 body=%s", len(items), payments.Body)
+	}
+	payment := items[0].(map[string]any)
+	if got := stringField(t, payment, "userId"); got != user.ID {
+		t.Fatalf("payment userId = %q, want %q", got, user.ID)
+	}
+	if got := numberField(t, payment, "amountMinor"); got != 1200 {
+		t.Fatalf("payment amountMinor = %v, want 1200", got)
+	}
+	if strings.Contains(payments.Body, otherUser.ID) {
+		t.Fatalf("payments list leaked another user payment: %s", payments.Body)
+	}
+}
+
 func TestAdjustmentRequiresReasonAndWritesLedgerBalanceAudit(t *testing.T) {
 	requireDB(t)
 	truncateTables(t)
@@ -729,6 +773,111 @@ func TestMockUsageEndpointAndUsageListDoNotExposeRawKey(t *testing.T) {
 	if strings.Contains(adminList.Body, raw) || strings.Contains(adminList.Body, "raw_api_key") || strings.Contains(adminList.Body, "key_hash") {
 		t.Fatalf("admin usage list leaked raw key or hash: %s", adminList.Body)
 	}
+}
+
+func TestUserUsageListFiltersPaginationAndScope(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	client := newTestClient(t)
+	adminUser := createUser(t, "admin@example.com", users.RoleAdmin)
+	user := createUser(t, "usage-user@example.com", users.RoleUser)
+	otherUser := createUser(t, "other-usage-user@example.com", users.RoleUser)
+	adminCookies := loginCookies(t, client, adminUser.Email)
+	userCookies := loginCookies(t, client, user.Email)
+	otherCookies := loginCookies(t, client, otherUser.Email)
+
+	created := client.post(t, "/v1/api-key", map[string]any{"name": "Default"}, userCookies)
+	assertStatus(t, created, http.StatusCreated)
+	keyID := stringField(t, created.JSON, "api_key.id")
+	otherCreated := client.post(t, "/v1/api-key", map[string]any{"name": "Other"}, otherCookies)
+	assertStatus(t, otherCreated, http.StatusCreated)
+	otherKeyID := stringField(t, otherCreated.JSON, "api_key.id")
+
+	for _, event := range []map[string]any{
+		{
+			"api_key_id":        keyID,
+			"external_event_id": "user-usage-001",
+			"model":             "gpt-5.5",
+			"provider":          "openai",
+			"input_tokens":      100,
+			"output_tokens":     50,
+			"occurred_at":       "2026-04-28T10:00:00Z",
+		},
+		{
+			"api_key_id":        keyID,
+			"external_event_id": "user-usage-002",
+			"model":             "claude-sonnet",
+			"provider":          "anthropic",
+			"input_tokens":      200,
+			"output_tokens":     75,
+			"occurred_at":       "2026-04-29T10:00:00Z",
+		},
+		{
+			"api_key_id":        otherKeyID,
+			"external_event_id": "other-usage-001",
+			"model":             "gpt-5.5",
+			"provider":          "openai",
+			"input_tokens":      300,
+			"output_tokens":     125,
+			"occurred_at":       "2026-04-29T11:00:00Z",
+		},
+	} {
+		ingested := client.post(t, "/v1/internal/usage/mock-event", event, adminCookies)
+		assertStatus(t, ingested, http.StatusCreated)
+	}
+
+	all := client.get(t, "/v1/usage", userCookies)
+	assertStatus(t, all, http.StatusOK)
+	allItems := all.JSON["usage"].([]any)
+	if len(allItems) != 2 {
+		t.Fatalf("usage len = %d, want 2 body=%s", len(allItems), all.Body)
+	}
+
+	modelFiltered := client.get(t, "/v1/usage?model=gpt-5.5", userCookies)
+	assertStatus(t, modelFiltered, http.StatusOK)
+	modelItems := modelFiltered.JSON["usage"].([]any)
+	if len(modelItems) != 1 {
+		t.Fatalf("model filtered len = %d, want 1 body=%s", len(modelItems), modelFiltered.Body)
+	}
+	if got := stringField(t, modelItems[0].(map[string]any), "external_event_id"); got != "user-usage-001" {
+		t.Fatalf("model filtered event = %q", got)
+	}
+
+	providerFiltered := client.get(t, "/v1/usage?provider=anthropic", userCookies)
+	assertStatus(t, providerFiltered, http.StatusOK)
+	if got := stringField(t, providerFiltered.JSON["usage"].([]any)[0].(map[string]any), "external_event_id"); got != "user-usage-002" {
+		t.Fatalf("provider filtered event = %q", got)
+	}
+
+	statusFiltered := client.get(t, "/v1/usage?status=billed", userCookies)
+	assertStatus(t, statusFiltered, http.StatusOK)
+	if got := len(statusFiltered.JSON["usage"].([]any)); got != 2 {
+		t.Fatalf("status filtered len = %d, want 2", got)
+	}
+
+	timeFiltered := client.get(t, "/v1/usage?from=2026-04-29T00:00:00Z&to=2026-04-29T23:59:59Z", userCookies)
+	assertStatus(t, timeFiltered, http.StatusOK)
+	timeItems := timeFiltered.JSON["usage"].([]any)
+	if len(timeItems) != 1 {
+		t.Fatalf("time filtered len = %d, want 1 body=%s", len(timeItems), timeFiltered.Body)
+	}
+	if got := stringField(t, timeItems[0].(map[string]any), "external_event_id"); got != "user-usage-002" {
+		t.Fatalf("time filtered event = %q", got)
+	}
+
+	firstPage := client.get(t, "/v1/usage?limit=1&offset=0", userCookies)
+	assertStatus(t, firstPage, http.StatusOK)
+	if got := stringField(t, firstPage.JSON["usage"].([]any)[0].(map[string]any), "external_event_id"); got != "user-usage-002" {
+		t.Fatalf("first page event = %q", got)
+	}
+	secondPage := client.get(t, "/v1/usage?limit=1&offset=1", userCookies)
+	assertStatus(t, secondPage, http.StatusOK)
+	if got := stringField(t, secondPage.JSON["usage"].([]any)[0].(map[string]any), "external_event_id"); got != "user-usage-001" {
+		t.Fatalf("second page event = %q", got)
+	}
+
+	invalidDate := client.get(t, "/v1/usage?from=not-a-date", userCookies)
+	assertStatus(t, invalidDate, http.StatusBadRequest)
 }
 
 func TestAdminUsageSyncStatusAndManualSyncUpdatesStatus(t *testing.T) {

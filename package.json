@@ -8,7 +8,7 @@
     "web:dev": "npm --workspace apps/web run dev",
     "web:build": "npm --workspace apps/web run build",
     "web:lint": "npm --workspace apps/web run lint",
-    "api:dev": "cd services/api && go run ./cmd/slai-api serve",
+    "api:dev": "if [ -f services/api/.env ]; then set -a; . services/api/.env; set +a; fi; cd services/api && go run ./cmd/slai-api serve",
     "api:migrate": "cd services/api && go run ./cmd/slai-api migrate up"
   }
 }

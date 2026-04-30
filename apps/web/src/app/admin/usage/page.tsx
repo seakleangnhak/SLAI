@@ -11,7 +11,7 @@ import { ErrorState } from "@/components/ErrorState";
 import { LoadingState } from "@/components/LoadingState";
 import { api, readableError, type UsageEvent, type UsageFilter } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { formatCompactUnits, formatDateTime, formatUnits, truncateId } from "@/lib/format";
+import { formatCompactCredits, formatCompactUnits, formatCredits, formatDateTime, formatUnits, truncateId } from "@/lib/format";
 
 const LIMIT = 50;
 const usageStatuses = ["pending", "billed", "duplicate", "failed", "ignored"] as const;
@@ -160,8 +160,8 @@ export default function AdminUsagePage() {
         />
         <UsageSummaryCard
           label="Credit cost"
-          value={formatCompactUnits(summary.costUnits)}
-          hint="Deducted credit units"
+          value={formatCompactCredits(summary.costUnits)}
+          hint="Deducted credits"
           scope="Current page"
           tone="green"
         />
@@ -314,7 +314,7 @@ function UsageTable({ events, onSelect }: { events: UsageEvent[]; onSelect: (eve
                   <p className="font-mono text-slate-900">{formatCompactUnits(event.total_tokens)}</p>
                   <p className="mt-1 text-xs text-slate-500">{formatCompactUnits(event.input_tokens)} in / {formatCompactUnits(event.output_tokens)} out</p>
                 </DenseTd>
-                <DenseTd><span className="font-mono text-slate-900">{formatCompactUnits(event.cost_units)}</span></DenseTd>
+                <DenseTd><span className="font-mono text-slate-900">{formatCompactCredits(event.cost_units)}</span></DenseTd>
                 <DenseTd><Badge dot tone={usageStatusTone(event.status)}>{event.status}</Badge></DenseTd>
                 <DenseTd>
                   <p className="text-xs text-slate-600">{event.external_source}</p>
@@ -379,7 +379,7 @@ function UsageDetailsDrawer({ event, onClose }: { event: UsageEvent; onClose: ()
             <DetailField label="Input tokens" value={formatUnits(event.input_tokens)} mono />
             <DetailField label="Output tokens" value={formatUnits(event.output_tokens)} mono />
             <DetailField label="Total tokens" value={formatUnits(event.total_tokens)} mono />
-            <DetailField label="Cost units" value={formatUnits(event.cost_units)} mono />
+            <DetailField label="Credit cost" value={formatCredits(event.cost_units)} mono />
           </section>
 
           <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">

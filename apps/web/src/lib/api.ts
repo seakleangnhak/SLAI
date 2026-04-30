@@ -1,5 +1,6 @@
 export const CONFIGURED_API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 export const API_PROXY_BASE = "/api/slai";
+export const CREDIT_UNIT_SCALE = 1_000_000;
 
 export type Role = "USER" | "ADMIN";
 export type UserStatus = "ACTIVE" | "SUSPENDED";
@@ -39,6 +40,23 @@ export type PackageInput = {
   active?: boolean;
   sortOrder: number;
 };
+
+export type Payment = {
+  id: string;
+  userId: string;
+  packageId?: string | null;
+  provider: string;
+  providerRef?: string | null;
+  amountMinor: number;
+  currency: string;
+  creditUnits: number;
+  status: string;
+  adminId?: string | null;
+  note?: string | null;
+  createdAt: string;
+  paidAt?: string | null;
+};
+
 
 export type Balance = {
   userId: string;
@@ -163,6 +181,8 @@ export type UsageFilter = {
   limit?: number;
   offset?: number;
 };
+
+export type UserUsageFilter = Omit<UsageFilter, "user_id" | "api_key_id">;
 
 export type AdminUserFilter = {
   q?: string;
@@ -441,6 +461,43 @@ function toQuery(params: Record<string, string | number | undefined>) {
   return query ? `?${query}` : "";
 }
 
+function toStoredCredits(value: number) {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.round(value * CREDIT_UNIT_SCALE);
+}
+
+function scalePackageInput(input: PackageInput): PackageInput {
+  return {
+    ...input,
+    creditUnits: toStoredCredits(input.creditUnits),
+    bonusCreditUnits: toStoredCredits(input.bonusCreditUnits)
+  };
+}
+
+function scalePartialPackageInput(input: Partial<PackageInput>): Partial<PackageInput> {
+  return {
+    ...input,
+    creditUnits: input.creditUnits === undefined ? undefined : toStoredCredits(input.creditUnits),
+    bonusCreditUnits: input.bonusCreditUnits === undefined ? undefined : toStoredCredits(input.bonusCreditUnits)
+  };
+}
+
+function scaleManualTopUpInput(input: ManualTopUpInput): ManualTopUpInput {
+  return {
+    ...input,
+    creditUnits: toStoredCredits(input.creditUnits)
+  };
+}
+
+function scaleAdjustmentInput(input: AdjustmentInput): AdjustmentInput {
+  return {
+    ...input,
+    deltaUnits: toStoredCredits(input.deltaUnits)
+  };
+}
+
 export const api = {
   auth: {
     signup: (email: string, password: string) =>
@@ -465,9 +522,14 @@ export const api = {
   ledger: {
     list: (limit = 50) => apiFetch<{ ledger: LedgerEntry[] }>(`/v1/ledger${toQuery({ limit })}`)
   },
+  payments: {
+    list: (limit = 50, offset = 0) => apiFetch<{ payments: Payment[] }>(`/v1/payments${toQuery({ limit, offset })}`)
+  },
   usage: {
-    list: (limit = 50, offset = 0) =>
-      apiFetch<{ usage: UsageEvent[] }>(`/v1/usage${toQuery({ limit, offset })}`)
+    list: (filterOrLimit: UserUsageFilter | number = 50, offset = 0) => {
+      const filter = typeof filterOrLimit === "number" ? { limit: filterOrLimit, offset } : filterOrLimit;
+      return apiFetch<{ usage: UsageEvent[] }>(`/v1/usage${toQuery(filter)}`);
+    }
   },
   apiKeys: {
     get: () => apiFetch<{ api_key: PublicAPIKey }>("/v1/api-key"),
@@ -502,26 +564,26 @@ export const api = {
       create: (input: PackageInput) =>
         apiFetch<{ package: CreditPackage }>("/v1/admin/packages", {
           method: "POST",
-          body: input
+          body: scalePackageInput(input)
         }),
       update: (id: string, input: Partial<PackageInput>) =>
         apiFetch<{ package: CreditPackage }>(`/v1/admin/packages/${id}`, {
           method: "PATCH",
-          body: input
+          body: scalePartialPackageInput(input)
         })
     },
     payments: {
       manualTopUp: (input: ManualTopUpInput) =>
         apiFetch("/v1/admin/payments/manual-topup", {
           method: "POST",
-          body: input
+          body: scaleManualTopUpInput(input)
         })
     },
     ledger: {
       adjustment: (input: AdjustmentInput) =>
         apiFetch("/v1/admin/ledger/adjustments", {
           method: "POST",
-          body: input
+          body: scaleAdjustmentInput(input)
         })
     },
     apiKeys: {

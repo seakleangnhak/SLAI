@@ -108,6 +108,7 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 	mux.HandleFunc("GET /v1/packages", server.listPublicPackages)
 	mux.HandleFunc("GET /v1/balance", server.balance)
 	mux.HandleFunc("GET /v1/ledger", server.ledgerEntries)
+	mux.HandleFunc("GET /v1/payments", server.payments)
 	mux.HandleFunc("GET /v1/usage", server.listUsage)
 	mux.HandleFunc("GET /v1/api-key", server.getAPIKey)
 	mux.HandleFunc("POST /v1/api-key", server.createAPIKey)
@@ -285,17 +286,32 @@ func (s *Server) ledgerEntries(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ledger": entries})
 }
 
+func (s *Server) payments(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	items, err := s.paymentService.ListForUser(r.Context(), user.ID, queryLimit(r, 50), queryOffset(r))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "payments_failed", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"payments": items})
+}
+
 func (s *Server) listUsage(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.requireUser(w, r)
 	if !ok {
 		return
 	}
 
-	filter := usage.ListFilter{
-		UserID: &user.ID,
-		Limit:  queryLimit(r, 50),
-		Offset: queryOffset(r),
+	filter, err := usageFilterFromRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_usage_filter", err)
+		return
 	}
+	filter.UserID = &user.ID
+
 	events, err := s.usageService.ListEvents(r.Context(), filter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "usage_failed", err)

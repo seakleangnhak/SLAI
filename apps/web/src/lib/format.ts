@@ -1,5 +1,31 @@
+export const CREDIT_UNIT_SCALE = 1_000_000;
+
 export function formatUnits(value: number | null | undefined) {
   return new Intl.NumberFormat("en-US").format(value ?? 0);
+}
+
+export function formatCredits(value: number | null | undefined, options: Intl.NumberFormatOptions = {}) {
+  const credits = (value ?? 0) / CREDIT_UNIT_SCALE;
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 6,
+    ...options
+  }).format(credits);
+}
+
+export function formatCompactCredits(value: number | null | undefined) {
+  const credits = (value ?? 0) / CREDIT_UNIT_SCALE;
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 3,
+    notation: "compact"
+  }).format(credits);
+}
+
+export function formatCreditInput(value: number | null | undefined) {
+  const credits = (value ?? 0) / CREDIT_UNIT_SCALE;
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 6,
+    useGrouping: false
+  }).format(credits);
 }
 
 export function formatCompactUnits(value: number | null | undefined) {
@@ -27,7 +53,7 @@ export function formatDateTime(value?: string | null) {
 }
 
 export function formatDelta(value: number) {
-  const formatted = formatUnits(Math.abs(value));
+  const formatted = formatCredits(Math.abs(value));
   return value < 0 ? `-${formatted}` : `+${formatted}`;
 }
 

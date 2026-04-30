@@ -22,6 +22,7 @@ import (
 	"github.com/slai/slai/services/api/internal/apikeys"
 	"github.com/slai/slai/services/api/internal/auth"
 	"github.com/slai/slai/services/api/internal/config"
+	"github.com/slai/slai/services/api/internal/credits"
 	"github.com/slai/slai/services/api/internal/ledger"
 	"github.com/slai/slai/services/api/internal/omniroute"
 	platformdb "github.com/slai/slai/services/api/internal/platform/db"
@@ -64,10 +65,12 @@ func TestMain(m *testing.M) {
 func TestCostCalculationExactProviderModelMatch(t *testing.T) {
 	requireDB(t)
 	truncateTables(t)
+	inputCost := storedWhole(t, 3)
+	outputCost := storedWhole(t, 5)
 	_, err := testDB.Exec(context.Background(), `
 		INSERT INTO pricing_rules (provider, model, input_cost_units_per_1k, output_cost_units_per_1k, active)
-		VALUES ('openai', 'gpt-5.5', 3, 5, true)
-	`)
+		VALUES ('openai', 'gpt-5.5', $1, $2, true)
+	`, inputCost, outputCost)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,10 +81,11 @@ func TestCostCalculationExactProviderModelMatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cost != 11 {
-		t.Fatalf("cost = %d, want 11", cost)
+	wantCost := storedDecimal(t, "3.008")
+	if cost != wantCost {
+		t.Fatalf("cost = %d, want %d", cost, wantCost)
 	}
-	if rule.InputCostUnitsPer1K != 3 || rule.OutputCostUnitsPer1K != 5 {
+	if rule.InputCostUnitsPer1K != inputCost || rule.OutputCostUnitsPer1K != outputCost {
 		t.Fatalf("wrong pricing rule selected: %#v", rule)
 	}
 }
@@ -96,8 +100,9 @@ func TestCostCalculationFallsBackToDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cost != 3 {
-		t.Fatalf("cost = %d, want 3", cost)
+	wantCost := storedDecimal(t, "2.001")
+	if cost != wantCost {
+		t.Fatalf("cost = %d, want %d", cost, wantCost)
 	}
 }
 
@@ -123,11 +128,12 @@ func TestIngestMockUsageDeductsBalanceLedgerAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != usage.StatusBilled || result.Event == nil || result.Event.CostUnits != 9 {
+	wantCost := storedDecimal(t, "7.597")
+	if result.Status != usage.StatusBilled || result.Event == nil || result.Event.CostUnits != wantCost {
 		t.Fatalf("unexpected ingest result: %#v", result)
 	}
-	assertBalanceAndLifetimeUsed(t, user.ID, 91, 9)
-	assertUsageLedger(t, result.Event.ID, -9)
+	assertBalanceAndLifetimeUsed(t, user.ID, storedDecimal(t, "92.403"), wantCost)
+	assertUsageLedger(t, result.Event.ID, -wantCost)
 
 	replay, err := svc.IngestMockEvent(context.Background(), usage.IngestInput{
 		ExternalEventID: "mock-001",
@@ -144,7 +150,7 @@ func TestIngestMockUsageDeductsBalanceLedgerAndIsIdempotent(t *testing.T) {
 	if !replay.Duplicate || replay.Status != usage.StatusDuplicate {
 		t.Fatalf("expected duplicate replay, got %#v", replay)
 	}
-	assertBalanceAndLifetimeUsed(t, user.ID, 91, 9)
+	assertBalanceAndLifetimeUsed(t, user.ID, storedDecimal(t, "92.403"), wantCost)
 }
 
 func TestUnknownAPIKeyIsIgnored(t *testing.T) {
@@ -167,7 +173,7 @@ func TestUnknownAPIKeyIsIgnored(t *testing.T) {
 	if !result.Ignored || result.Status != usage.StatusIgnored {
 		t.Fatalf("expected ignored result, got %#v", result)
 	}
-	assertBalanceAndLifetimeUsed(t, user.ID, 50, 0)
+	assertBalanceAndLifetimeUsed(t, user.ID, storedWhole(t, 50), 0)
 
 	var count int
 	if err := testDB.QueryRow(context.Background(), `SELECT count(*) FROM usage_events`).Scan(&count); err != nil {
@@ -176,6 +182,34 @@ func TestUnknownAPIKeyIsIgnored(t *testing.T) {
 	if count != 0 {
 		t.Fatalf("usage events count = %d, want 0", count)
 	}
+}
+
+func TestIngestOmniRouteCostOverrideDeductsProvidedCredits(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	user := createUser(t, "override@example.com", users.RoleUser)
+	key := createLocalAPIKey(t, user.ID)
+	creditUser(t, user.ID, 100)
+	svc := localUsageService()
+	override := storedDecimal(t, "0.001")
+
+	result, err := svc.IngestEvent(context.Background(), usage.IngestInput{
+		ExternalSource:    usage.ExternalSourceOmniRouteCallLogs,
+		ExternalEventID:   "omni-cost-override-001",
+		APIKeyID:          &key.APIKey.ID,
+		InputTokens:       1,
+		OutputTokens:      1,
+		CostUnitsOverride: &override,
+		OccurredAt:        time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Event == nil || result.Event.CostUnits != override {
+		t.Fatalf("unexpected ingest result: %#v", result)
+	}
+	assertBalanceAndLifetimeUsed(t, user.ID, storedDecimal(t, "99.999"), override)
+	assertUsageLedger(t, result.Event.ID, -override)
 }
 
 func TestUsageCanMakeBalanceNegativeAndSuspendsKey(t *testing.T) {
@@ -195,10 +229,11 @@ func TestUsageCanMakeBalanceNegativeAndSuspendsKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Event == nil || result.Event.CostUnits != 6 {
+	wantCost := storedDecimal(t, "5.001")
+	if result.Event == nil || result.Event.CostUnits != wantCost {
 		t.Fatalf("unexpected result: %#v", result)
 	}
-	assertBalanceAndLifetimeUsed(t, user.ID, -1, 6)
+	assertBalanceAndLifetimeUsed(t, user.ID, -storedDecimal(t, "0.001"), wantCost)
 	assertKeyStatus(t, key.APIKey.ID, apikeys.StatusSuspended)
 }
 
@@ -275,7 +310,7 @@ func TestRealOmniRouteClientBillingFlowWithFakeServer(t *testing.T) {
 	if result.Billed != 1 || result.Fetched != 1 {
 		t.Fatalf("sync result = %#v", result)
 	}
-	assertBalanceAndLifetimeUsed(t, user.ID, -1, 2)
+	assertBalanceAndLifetimeUsed(t, user.ID, -storedDecimal(t, "0.001"), storedDecimal(t, "1.001"))
 	assertKeyStatus(t, created.APIKey.ID, apikeys.StatusSuspended)
 	if fake.patchInactiveCalls != 1 {
 		t.Fatalf("patch inactive calls = %d, want 1", fake.patchInactiveCalls)
@@ -288,7 +323,7 @@ func TestRealOmniRouteClientBillingFlowWithFakeServer(t *testing.T) {
 	if replay.Duplicate != 1 || replay.Billed != 0 {
 		t.Fatalf("replay result = %#v", replay)
 	}
-	assertBalanceAndLifetimeUsed(t, user.ID, -1, 2)
+	assertBalanceAndLifetimeUsed(t, user.ID, -storedDecimal(t, "0.001"), storedDecimal(t, "1.001"))
 	if fake.patchInactiveCalls != 1 {
 		t.Fatalf("duplicate sync patched key again: %d", fake.patchInactiveCalls)
 	}
@@ -383,8 +418,9 @@ func createUser(t *testing.T, email, role string) users.User {
 	return created
 }
 
-func creditUser(t *testing.T, userID string, units int64) {
+func creditUser(t *testing.T, userID string, wholeCredits int64) {
 	t.Helper()
+	units := storedWhole(t, wholeCredits)
 	err := platformdb.InTx(context.Background(), testDB, func(tx pgx.Tx) error {
 		reason := "test credit"
 		_, _, err := ledger.NewService(tx).Mutate(context.Background(), ledger.Mutation{
@@ -400,6 +436,24 @@ func creditUser(t *testing.T, userID string, units int64) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func storedWhole(t *testing.T, value int64) int64 {
+	t.Helper()
+	units, err := credits.FromWhole(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return units
+}
+
+func storedDecimal(t *testing.T, value string) int64 {
+	t.Helper()
+	units, err := credits.FromDecimalString(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return units
 }
 
 func assertBalanceAndLifetimeUsed(t *testing.T, userID string, available int64, lifetimeUsed int64) {
@@ -447,8 +501,8 @@ func truncateTables(t *testing.T) {
 	_, err = testDB.Exec(context.Background(), `
 		DELETE FROM pricing_rules;
 		INSERT INTO pricing_rules (provider, model, input_cost_units_per_1k, output_cost_units_per_1k, active)
-		VALUES (NULL, NULL, 1, 1, true)
-	`)
+		VALUES (NULL, NULL, $1, $1, true)
+	`, credits.Scale)
 	if err != nil {
 		t.Fatal(err)
 	}

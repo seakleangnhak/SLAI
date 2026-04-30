@@ -28,8 +28,18 @@ func (s PricingService) CalculateCost(ctx context.Context, provider *string, mod
 		return 0, PricingRule{}, err
 	}
 
-	cost := ceilDiv(inputTokens, 1000)*rule.InputCostUnitsPer1K + ceilDiv(outputTokens, 1000)*rule.OutputCostUnitsPer1K
-	return cost, rule, nil
+	inputCost, err := ceilMulDiv(inputTokens, rule.InputCostUnitsPer1K, 1000)
+	if err != nil {
+		return 0, PricingRule{}, err
+	}
+	outputCost, err := ceilMulDiv(outputTokens, rule.OutputCostUnitsPer1K, 1000)
+	if err != nil {
+		return 0, PricingRule{}, err
+	}
+	if inputCost > maxInt64()-outputCost {
+		return 0, PricingRule{}, errors.New("pricing calculation overflow")
+	}
+	return inputCost + outputCost, rule, nil
 }
 
 func (s PricingService) FindRule(ctx context.Context, provider *string, model *string) (PricingRule, error) {
@@ -77,9 +87,17 @@ func scanPricingRule(row pgx.Row) (PricingRule, error) {
 	return rule, nil
 }
 
-func ceilDiv(value int64, divisor int64) int64 {
-	if value <= 0 {
-		return 0
+func ceilMulDiv(value int64, multiplier int64, divisor int64) (int64, error) {
+	if value <= 0 || multiplier <= 0 {
+		return 0, nil
 	}
-	return (value + divisor - 1) / divisor
+	if divisor <= 0 {
+		return 0, errors.New("divisor must be positive")
+	}
+	if value > (maxInt64()-(divisor-1))/multiplier {
+		return 0, errors.New("pricing calculation overflow")
+	}
+	return (value*multiplier + divisor - 1) / divisor, nil
 }
+
+func maxInt64() int64 { return int64(^uint64(0) >> 1) }

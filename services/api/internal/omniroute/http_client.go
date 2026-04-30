@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/slai/slai/services/api/internal/config"
+	"github.com/slai/slai/services/api/internal/credits"
 )
 
 const (
@@ -376,6 +377,7 @@ func mapCallLog(raw map[string]any) (CallLog, error) {
 	if err != nil {
 		return CallLog{}, err
 	}
+	costUnits := costUnitsField(raw)
 
 	return CallLog{
 		ExternalID:   externalID,
@@ -384,6 +386,7 @@ func mapCallLog(raw map[string]any) (CallLog, error) {
 		Provider:     stringField(raw, "provider", "connectionProvider", "connectionName", "connection_id"),
 		InputTokens:  int64Field(raw, []string{"inputTokens", "promptTokens", "tokensIn", "tokens_in"}, []string{"tokens", "in"}, []string{"tokens", "input"}),
 		OutputTokens: int64Field(raw, []string{"outputTokens", "completionTokens", "tokensOut", "tokens_out"}, []string{"tokens", "out"}, []string{"tokens", "output"}),
+		CostUnits:    costUnits,
 		OccurredAt:   occurredAt,
 		Raw:          raw,
 	}, nil
@@ -399,12 +402,16 @@ func mapUsageRecord(raw map[string]any) (UsageRecord, error) {
 	if err != nil {
 		return UsageRecord{}, err
 	}
+	costUnits := int64(0)
+	if parsed := costUnitsField(raw); parsed != nil {
+		costUnits = *parsed
+	}
 	return UsageRecord{
 		ExternalID: externalID,
 		APIKeyID:   apiKeyID,
 		Model:      stringField(raw, "model"),
 		Provider:   stringField(raw, "provider", "connectionProvider", "connectionName"),
-		CostUnits:  int64Field(raw, []string{"costUnits", "cost_units"}),
+		CostUnits:  costUnits,
 		OccurredAt: occurredAt,
 		Raw:        raw,
 	}, nil
@@ -454,6 +461,67 @@ func int64Field(raw map[string]any, paths ...[]string) int64 {
 		}
 	}
 	return 0
+}
+
+func costUnitsField(raw map[string]any) *int64 {
+	if value, ok := decimalStringField(raw,
+		[]string{"costUnits"},
+		[]string{"cost_units"},
+		[]string{"creditUnits"},
+		[]string{"credit_units"},
+		[]string{"cost", "credits"},
+	); ok {
+		units, err := credits.FromDecimalString(value)
+		if err == nil {
+			return &units
+		}
+	}
+
+	if value, ok := decimalStringField(raw,
+		[]string{"costUsd"},
+		[]string{"cost_usd"},
+		[]string{"costUSD"},
+		[]string{"usdCost"},
+		[]string{"usd_cost"},
+		[]string{"cost", "usd"},
+		[]string{"cost", "USD"},
+		[]string{"billing", "costUsd"},
+		[]string{"billing", "cost_usd"},
+	); ok {
+		units, err := credits.FromDecimalString(value)
+		if err == nil {
+			return &units
+		}
+	}
+
+	return nil
+}
+
+func decimalStringField(raw map[string]any, paths ...[]string) (string, bool) {
+	for _, path := range paths {
+		value, ok := nestedField(raw, path...)
+		if !ok || value == nil {
+			continue
+		}
+		switch typed := value.(type) {
+		case float64:
+			return strconv.FormatFloat(typed, 'f', -1, 64), true
+		case float32:
+			return strconv.FormatFloat(float64(typed), 'f', -1, 32), true
+		case int:
+			return strconv.Itoa(typed), true
+		case int64:
+			return strconv.FormatInt(typed, 10), true
+		case json.Number:
+			return typed.String(), true
+		case string:
+			trimmed := strings.TrimSpace(typed)
+			if trimmed != "" {
+				return trimmed, true
+			}
+		}
+	}
+	return "", false
 }
 
 func nestedField(raw map[string]any, path ...string) (any, bool) {

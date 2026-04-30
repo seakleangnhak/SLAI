@@ -12,7 +12,7 @@ import { ErrorState } from "@/components/ErrorState";
 import { LoadingState } from "@/components/LoadingState";
 import { api, readableError, type AdminUserFilter, type AdminUserListItem, type AdminUserListResponse, type UserStatus } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { formatCompactUnits, formatDateTime, formatUnits, truncateId } from "@/lib/format";
+import { formatCompactCredits, formatDateTime, formatUnits, truncateId } from "@/lib/format";
 
 const LIMIT = 50;
 
@@ -172,8 +172,8 @@ export default function AdminUsersPage() {
                         </DenseTd>
                         <DenseTd><Badge dot tone={statusTone(user.role)}>{user.role}</Badge></DenseTd>
                         <DenseTd><Badge dot tone={statusTone(user.status)}>{user.status}</Badge></DenseTd>
-                        <DenseTd><span className="font-mono text-slate-900">{formatCompactUnits(user.balance_units)}</span></DenseTd>
-                        <DenseTd><span className="font-mono text-slate-700">{formatCompactUnits(user.lifetime_used_units)}</span></DenseTd>
+                        <DenseTd><span className="font-mono text-slate-900">{formatCompactCredits(user.balance_units)}</span></DenseTd>
+                        <DenseTd><span className="font-mono text-slate-700">{formatCompactCredits(user.lifetime_used_units)}</span></DenseTd>
                         <DenseTd>
                           {user.api_key_status ? (
                             <div className="space-y-1">

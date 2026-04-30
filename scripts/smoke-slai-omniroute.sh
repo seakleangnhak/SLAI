@@ -5,7 +5,6 @@ set -Eeuo pipefail
 # Smoke test for the SLAI + OmniRoute prepaid billing path.
 #
 # Required environment:
-#   SLAI_API_URL
 #   SLAI_ADMIN_EMAIL
 #   SLAI_ADMIN_PASSWORD
 #   SLAI_USER_EMAIL
@@ -13,9 +12,15 @@ set -Eeuo pipefail
 #   OMNIROUTE_BASE_URL
 #
 # Optional environment:
+#   SLAI_API_URL
 #   OMNIROUTE_MANAGEMENT_TOKEN
 #   OMNIROUTE_SMOKE_MODEL
-#   SLAI_SMOKE_TOPUP_UNITS
+#   SLAI_SMOKE_LOAD_API_ENV
+#   SLAI_SMOKE_PACKAGE_NAME
+#   SLAI_SMOKE_PACKAGE_CREDITS
+#   SLAI_SMOKE_RUN_ID
+#   SLAI_SMOKE_TOPUP_CREDITS
+#   SLAI_SMOKE_TOPUP_UNITS (raw stored units override)
 #   SLAI_SMOKE_TOPUP_MINOR
 #   SLAI_SMOKE_EXHAUST
 #
@@ -33,6 +38,10 @@ RAW_API_KEY=""
 SLAI_API_KEY_ID=""
 SLAI_USER_ID=""
 SLAI_PACKAGE_ID=""
+SLAI_SMOKE_RUN_ID=""
+PASS_MESSAGES=()
+WARN_MESSAGES=()
+CREDIT_UNIT_SCALE=1000000
 
 log() {
   printf '[%s] %s\n' "$SCRIPT_NAME" "$*"
@@ -40,7 +49,59 @@ log() {
 
 fail() {
   printf '[%s] ERROR: %s\n' "$SCRIPT_NAME" "$*" >&2
+  print_summary 'FAILED' >&2
   exit 1
+}
+
+record_pass() {
+  PASS_MESSAGES+=("$1")
+  log "PASS: $1"
+}
+
+record_warn() {
+  WARN_MESSAGES+=("$1")
+  log "WARN: $1"
+}
+
+print_summary() {
+  local status="${1:-PASSED}"
+  local stream="/dev/stdout"
+
+  if [[ "$status" != 'PASSED' ]]; then
+    stream="/dev/stderr"
+  fi
+
+  {
+    printf '[%s] ===== smoke test %s =====\n' "$SCRIPT_NAME" "$status"
+    printf '[%s] passes: %d\n' "$SCRIPT_NAME" "${#PASS_MESSAGES[@]}"
+    for item in "${PASS_MESSAGES[@]}"; do
+      printf '[%s]   - %s\n' "$SCRIPT_NAME" "$item"
+    done
+    if ((${#WARN_MESSAGES[@]} > 0)); then
+      printf '[%s] warnings: %d\n' "$SCRIPT_NAME" "${#WARN_MESSAGES[@]}"
+      for item in "${WARN_MESSAGES[@]}"; do
+        printf '[%s]   - %s\n' "$SCRIPT_NAME" "$item"
+      done
+    fi
+  } >"$stream"
+}
+
+load_local_api_env() {
+  if [[ "${SLAI_SMOKE_LOAD_API_ENV:-true}" != 'true' ]]; then
+    return
+  fi
+
+  if [[ ! -f services/api/.env ]]; then
+    return
+  fi
+
+  set -a
+  # shellcheck disable=SC1091
+  . services/api/.env
+  set +a
+
+  SLAI_ADMIN_EMAIL="${SLAI_ADMIN_EMAIL:-${ADMIN_SEED_EMAIL:-}}"
+  SLAI_ADMIN_PASSWORD="${SLAI_ADMIN_PASSWORD:-${ADMIN_SEED_PASSWORD:-}}"
 }
 
 require_env() {
@@ -114,12 +175,27 @@ make_json_login() {
     '{email: $email, password: $password}'
 }
 
+stored_credit_units() {
+  local credits="$1"
+  jq -rn --arg credits "$credits" --argjson scale "$CREDIT_UNIT_SCALE" '($credits | tonumber) * $scale | round'
+}
+
+format_stored_credits() {
+  local units="$1"
+  jq -rn --argjson units "$units" --argjson scale "$CREDIT_UNIT_SCALE" '($units / $scale) | tostring'
+}
+
 make_json_package() {
+  local package_credits
+  package_credits="$(stored_credit_units "${SLAI_SMOKE_PACKAGE_CREDITS:-1000}")"
+
   jq -n \
+    --arg name "${SLAI_SMOKE_PACKAGE_NAME:-Smoke Test Pack}" \
+    --argjson creditUnits "$package_credits" \
     '{
-      name: "Smoke Test Pack",
+      name: $name,
       description: "Temporary package for E2E testing",
-      creditUnits: 1000,
+      creditUnits: $creditUnits,
       bonusCreditUnits: 0,
       priceMinor: 1000,
       currency: "USD",
@@ -259,6 +335,10 @@ expect_2xx() {
   if [[ "$HTTP_STATUS" != 2* ]]; then
     printf '[%s] %s returned HTTP %s\n' "$SCRIPT_NAME" "$label" "$HTTP_STATUS" >&2
     print_body_redacted "$HTTP_BODY" >&2
+    if [[ "$HTTP_STATUS" == '501' && "$HTTP_BODY" == *'omniroute_sync_not_implemented'* ]]; then
+      printf '[%s] Hint: the SLAI API is using the local OmniRoute stub. Set OMNIROUTE_ENABLED=true, load services/api/.env, and restart the API process.\n' "$SCRIPT_NAME" >&2
+    fi
+    print_summary 'FAILED' >&2
     exit 1
   fi
 }
@@ -300,7 +380,7 @@ check_health() {
     fail "unexpected /healthz response: $(redact_text "$response")"
   fi
 
-  log "SLAI health OK"
+  record_pass "SLAI health endpoint responded"
 }
 
 check_readiness() {
@@ -309,6 +389,7 @@ check_readiness() {
   slai_json GET /readyz '' ''
   expect_2xx 'SLAI readiness'
   print_step_result 'SLAI ready'
+  record_pass "SLAI readiness endpoint responded"
 }
 
 login_admin() {
@@ -320,6 +401,43 @@ login_admin() {
   slai_json POST /v1/auth/login "$ADMIN_COOKIES" "$body"
   expect_2xx 'admin login'
   print_step_result 'admin login succeeded'
+  record_pass "admin login succeeded"
+}
+
+assert_sync_configuration() {
+  log "checking SLAI OmniRoute sync configuration"
+
+  slai_json GET /v1/admin/usage/sync-status "$ADMIN_COOKIES" ''
+  expect_2xx 'sync status'
+
+  local omniroute_enabled
+  local sync_mode
+  local worker_enabled
+  local last_error
+
+  omniroute_enabled="$(json_value '.sync_status.omniroute_enabled' "$HTTP_BODY")"
+  sync_mode="$(json_value '.sync_status.sync_mode' "$HTTP_BODY")"
+  worker_enabled="$(json_value '.sync_status.worker_enabled' "$HTTP_BODY")"
+  last_error="$(json_value '.sync_status.last_error // ""' "$HTTP_BODY")"
+
+  if [[ "$omniroute_enabled" != 'true' ]]; then
+    fail 'SLAI reports omniroute_enabled=false. The smoke test requires the real OmniRoute HTTP client; restart the API with OMNIROUTE_ENABLED=true.'
+  fi
+
+  if [[ "$sync_mode" != 'call_logs' ]]; then
+    fail "SLAI reports sync_mode=$sync_mode. The E2E smoke test requires OMNIROUTE_USAGE_SYNC_MODE=call_logs."
+  fi
+
+  if [[ "$worker_enabled" != 'true' ]]; then
+    record_warn 'automatic usage sync worker is disabled; manual sync will still be used by the smoke test'
+  fi
+
+  if [[ -n "$last_error" && "$last_error" != 'null' ]]; then
+    record_warn "previous sync error is still recorded: $(redact_text "$last_error")"
+  fi
+
+  print_step_result 'usage sync status before test'
+  record_pass "SLAI is using OmniRoute call-log sync"
 }
 
 signup_or_login_user() {
@@ -349,9 +467,36 @@ signup_or_login_user() {
   fi
 
   log "SLAI user ID: $SLAI_USER_ID"
+  record_pass "test user session ready"
 }
 
-create_package() {
+ensure_package() {
+  log "finding or creating smoke-test credit package"
+
+  local package_name="${SLAI_SMOKE_PACKAGE_NAME:-Smoke Test Pack}"
+  local found_id
+  local found_active
+
+  slai_json GET /v1/admin/packages "$ADMIN_COOKIES" ''
+  expect_2xx 'list admin packages'
+
+  found_id="$(jq -r --arg name "$package_name" '[.packages[]? | select(.name == $name)] | sort_by(.createdAt) | last | .id // empty' <<<"$HTTP_BODY")"
+  found_active="$(jq -r --arg name "$package_name" '[.packages[]? | select(.name == $name)] | sort_by(.createdAt) | last | .active // empty' <<<"$HTTP_BODY")"
+
+  if [[ -n "$found_id" ]]; then
+    SLAI_PACKAGE_ID="$found_id"
+    log "using existing package: $SLAI_PACKAGE_ID"
+
+    if [[ "$found_active" != 'true' ]]; then
+      log "existing smoke package is inactive; activating it"
+      slai_json PATCH "/v1/admin/packages/${SLAI_PACKAGE_ID}" "$ADMIN_COOKIES" '{"active":true}'
+      expect_2xx 'activate existing package'
+    fi
+
+    record_pass "smoke credit package ready"
+    return
+  fi
+
   log "creating smoke-test credit package"
 
   local body
@@ -368,14 +513,38 @@ create_package() {
 
   print_step_result 'package created'
   log "package ID: $SLAI_PACKAGE_ID"
+  record_pass "smoke credit package created"
+}
+
+confirm_public_package() {
+  log "confirming smoke package appears in public packages API"
+
+  slai_json GET /v1/packages '' ''
+  expect_2xx 'public packages list'
+
+  local public_count
+  public_count="$(jq -r --arg id "$SLAI_PACKAGE_ID" '[.packages[]? | select(.id == $id and .active == true)] | length' <<<"$HTTP_BODY")"
+
+  if [[ "$public_count" == '0' ]]; then
+    fail "smoke package $SLAI_PACKAGE_ID was not visible in /v1/packages"
+  fi
+
+  print_step_result 'public packages list'
+  record_pass "smoke credit package visible publicly"
 }
 
 top_up_user() {
   log "manual top-up for smoke-test user"
 
-  local units="${SLAI_SMOKE_TOPUP_UNITS:-1000}"
+  local units
   local amount="${SLAI_SMOKE_TOPUP_MINOR:-1000}"
-  local idempotency_key="smoke-topup-$(date +%s)"
+  if [[ -n "${SLAI_SMOKE_TOPUP_UNITS:-}" ]]; then
+    units="$SLAI_SMOKE_TOPUP_UNITS"
+    record_warn 'SLAI_SMOKE_TOPUP_UNITS is raw stored units; prefer SLAI_SMOKE_TOPUP_CREDITS for displayed credits'
+  else
+    units="$(stored_credit_units "${SLAI_SMOKE_TOPUP_CREDITS:-1000}")"
+  fi
+  local idempotency_key="smoke-topup-${SLAI_SMOKE_RUN_ID}"
   local body
 
   body="$(make_json_topup "$SLAI_USER_ID" "$SLAI_PACKAGE_ID" "$amount" "$units")"
@@ -389,6 +558,7 @@ top_up_user() {
 
   expect_2xx 'manual top-up'
   print_step_result 'manual top-up succeeded'
+  record_pass "manual top-up completed"
 }
 
 create_or_rotate_api_key() {
@@ -425,6 +595,7 @@ create_or_rotate_api_key() {
     "$RAW_API_KEY"
 
   log "SLAI API key ID: $SLAI_API_KEY_ID"
+  record_pass "SLAI-created raw API key available for OmniRoute call"
 }
 
 confirm_key_metadata() {
@@ -439,6 +610,7 @@ confirm_key_metadata() {
   slai_json GET "/v1/admin/users/${SLAI_USER_ID}/api-key" "$ADMIN_COOKIES" ''
   expect_2xx 'admin API key metadata'
   print_step_result 'admin API key metadata'
+  record_pass "API key metadata visible without raw key leakage"
 }
 
 optionally_list_omniroute_keys() {
@@ -457,6 +629,7 @@ optionally_list_omniroute_keys() {
 
   expect_2xx 'OmniRoute key list'
   print_step_result 'OmniRoute key list, secrets redacted'
+  record_pass "OmniRoute management API listed keys"
 }
 
 call_omniroute_chat() {
@@ -476,6 +649,7 @@ call_omniroute_chat() {
 
   expect_2xx 'OmniRoute chat completion'
   print_step_result 'OmniRoute chat response, secrets redacted'
+  record_pass "$label"
 }
 
 sync_usage() {
@@ -486,6 +660,7 @@ sync_usage() {
   slai_json POST /v1/admin/usage/sync "$ADMIN_COOKIES" '{}'
   expect_2xx 'manual usage sync'
   print_step_result 'manual usage sync result'
+  record_pass "$label"
 }
 
 show_usage_balance_and_ledger() {
@@ -495,17 +670,54 @@ show_usage_balance_and_ledger() {
   expect_2xx 'user usage list'
   print_step_result 'user usage list'
 
+  local usage_count
+  usage_count="$(json_value '[.usage[]?] | length' "$HTTP_BODY")"
+  if [[ "$usage_count" == '0' ]]; then
+    fail 'no user usage events were visible after sync'
+  fi
+
+  log "listing admin usage events for smoke-test user"
+
+  slai_json GET "/v1/admin/usage?user_id=${SLAI_USER_ID}&limit=20" "$ADMIN_COOKIES" ''
+  expect_2xx 'admin usage list'
+  print_step_result 'admin usage list'
+
+  local admin_usage_count
+  admin_usage_count="$(json_value '[.usage[]?] | length' "$HTTP_BODY")"
+  if [[ "$admin_usage_count" == '0' ]]; then
+    fail 'no admin usage events were visible after sync'
+  fi
+
   log "showing user balance"
 
   slai_json GET /v1/balance "$USER_COOKIES" ''
   expect_2xx 'user balance'
   print_step_result 'user balance'
 
+  local available
+  available="$(json_value '.balance.availableUnits' "$HTTP_BODY")"
+
   log "showing user ledger"
 
   slai_json GET '/v1/ledger?limit=20' "$USER_COOKIES" ''
   expect_2xx 'user ledger'
   print_step_result 'user ledger'
+
+  local debit_count
+  debit_count="$(json_value '[.ledger[]? | select(.type == "usage_debit")] | length' "$HTTP_BODY")"
+  if [[ "$debit_count" == '0' ]]; then
+    fail 'no usage_debit ledger entry was visible after sync'
+  fi
+
+  log "listing user payment history"
+
+  slai_json GET '/v1/payments?limit=20' "$USER_COOKIES" ''
+  expect_2xx 'user payments list'
+  print_step_result 'user payments list'
+
+  local available_credits
+  available_credits="$(format_stored_credits "$available")"
+  record_pass "usage, balance, ledger, and payments visible after sync; available balance: $available_credits credits ($available stored units)"
 }
 
 get_available_balance() {
@@ -529,9 +741,9 @@ check_duplicate_sync() {
   log "balance after duplicate sync:  $after"
 
   if [[ "$before" != "$after" ]]; then
-    log 'balance changed during duplicate sync; check whether worker or new logs ran concurrently'
+    record_warn 'balance changed during duplicate sync; check whether worker or new logs ran concurrently'
   else
-    log 'duplicate sync did not change balance'
+    record_pass 'duplicate sync did not change balance'
   fi
 }
 
@@ -552,7 +764,7 @@ maybe_exhaust_balance() {
 
   if [[ "$available" =~ ^-?[0-9]+$ && "$available" -gt 1 ]]; then
     delta=$((1 - available))
-    idempotency_key="smoke-adjust-down-$(date +%s)"
+    idempotency_key="smoke-adjust-down-${SLAI_SMOKE_RUN_ID}"
     body="$(make_json_adjustment \
       "$SLAI_USER_ID" \
       "$delta" \
@@ -587,6 +799,7 @@ maybe_exhaust_balance() {
   fi
 
   log 'key suspension confirmed'
+  record_pass 'key suspension confirmed after balance exhaustion'
 }
 
 show_sync_status() {
@@ -595,10 +808,14 @@ show_sync_status() {
   slai_json GET /v1/admin/usage/sync-status "$ADMIN_COOKIES" ''
   expect_2xx 'sync status'
   print_step_result 'usage sync status'
+  record_pass "sync status endpoint available after test"
 }
 
 main() {
-  require_env SLAI_API_URL
+  load_local_api_env
+
+  SLAI_API_URL="${SLAI_API_URL:-http://localhost:8080}"
+
   require_env SLAI_ADMIN_EMAIL
   require_env SLAI_ADMIN_PASSWORD
   require_env SLAI_USER_EMAIL
@@ -612,6 +829,7 @@ main() {
   SLAI_API_URL="${SLAI_API_URL%/}"
   OMNIROUTE_BASE_URL="${OMNIROUTE_BASE_URL%/}"
   OMNIROUTE_SMOKE_MODEL="${OMNIROUTE_SMOKE_MODEL:-gpt-4o-mini}"
+  SLAI_SMOKE_RUN_ID="${SLAI_SMOKE_RUN_ID:-$(date +%Y%m%d%H%M%S)}"
 
   WORK_DIR="$(mktemp -d -t slai-smoke.XXXXXX)"
   ADMIN_COOKIES="$WORK_DIR/admin.cookies"
@@ -622,13 +840,16 @@ main() {
   log "using SLAI API URL: $SLAI_API_URL"
   log "using OmniRoute URL: $OMNIROUTE_BASE_URL"
   log "using OmniRoute model: $OMNIROUTE_SMOKE_MODEL"
+  log "using smoke run ID: $SLAI_SMOKE_RUN_ID"
   log 'passwords and management tokens will not be printed'
 
   check_health
   check_readiness
   login_admin
+  assert_sync_configuration
   signup_or_login_user
-  create_package
+  ensure_package
+  confirm_public_package
   top_up_user
   create_or_rotate_api_key
   confirm_key_metadata
@@ -644,7 +865,7 @@ main() {
   maybe_exhaust_balance
   show_sync_status
 
-  log 'smoke test completed'
+  print_summary 'PASSED'
 }
 
 main "$@"

@@ -11,7 +11,7 @@ import { ErrorState } from "@/components/ErrorState";
 import { LoadingState } from "@/components/LoadingState";
 import { api, readableError, type CreditPackage, type PackageInput } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { formatCompactUnits, formatDateTime, formatMoney, formatUnits } from "@/lib/format";
+import { formatCompactCredits, formatCreditInput, formatDateTime, formatMoney, formatUnits } from "@/lib/format";
 
 type PackageForm = {
   name: string;
@@ -74,8 +74,8 @@ function packageToForm(pkg: CreditPackage): PackageForm {
   return {
     name: pkg.name,
     description: pkg.description ?? "",
-    creditUnits: String(pkg.creditUnits),
-    bonusCreditUnits: String(pkg.bonusCreditUnits),
+    creditUnits: formatCreditInput(pkg.creditUnits),
+    bonusCreditUnits: formatCreditInput(pkg.bonusCreditUnits),
     price: minorToMoney(pkg.priceMinor),
     currency: pkg.currency,
     active: pkg.active,
@@ -221,7 +221,7 @@ export default function AdminPackagesPage() {
         <SummaryCard label="Total packages" value={formatUnits(packages.length)} hint="Admin catalog" />
         <SummaryCard label="Active" value={formatUnits(summary.active)} hint="Visible to developers" tone="green" />
         <SummaryCard label="Inactive" value={formatUnits(summary.inactive)} hint="Hidden from public list" tone="yellow" />
-        <SummaryCard label="Credits offered" value={formatCompactUnits(summary.totalCredits)} hint="Included plus bonus" tone="blue" />
+        <SummaryCard label="Credits offered" value={formatCompactCredits(summary.totalCredits)} hint="Included plus bonus" tone="blue" />
         <SummaryCard
           label="Average price"
           value={summary.averagePrice === null || summary.currency === null ? "Mixed" : formatMoney(summary.averagePrice, summary.currency)}
@@ -290,8 +290,8 @@ export default function AdminPackagesPage() {
                         </div>
                       </DenseTd>
                       <DenseTd>
-                        <div className="font-mono text-slate-900">{formatCompactUnits(pkg.creditUnits)} + {formatCompactUnits(pkg.bonusCreditUnits)} bonus</div>
-                        <p className="mt-1 text-xs text-slate-500">{formatCompactUnits(pkg.creditUnits + pkg.bonusCreditUnits)} total</p>
+                        <div className="font-mono text-slate-900">{formatCompactCredits(pkg.creditUnits)} + {formatCompactCredits(pkg.bonusCreditUnits)} bonus</div>
+                        <p className="mt-1 text-xs text-slate-500">{formatCompactCredits(pkg.creditUnits + pkg.bonusCreditUnits)} total</p>
                       </DenseTd>
                       <DenseTd><span className="font-mono text-slate-900">{formatMoney(pkg.priceMinor, pkg.currency)}</span></DenseTd>
                       <DenseTd><Badge dot tone={pkg.active ? "green" : "yellow"}>{pkg.active ? "Active" : "Inactive"}</Badge></DenseTd>
@@ -476,10 +476,11 @@ function PackagePanel({
               <FormInput
                 error={fieldErrors.creditUnits}
                 label="Included credits"
-                min="1"
+                min="0.000001"
                 onChange={(event) => setForm({ ...form, creditUnits: event.target.value })}
                 required
                 type="number"
+                step="0.000001"
                 value={form.creditUnits}
               />
               <FormInput
@@ -489,13 +490,14 @@ function PackagePanel({
                 onChange={(event) => setForm({ ...form, bonusCreditUnits: event.target.value })}
                 required
                 type="number"
+                step="0.000001"
                 value={form.bonusCreditUnits}
               />
             </div>
             <DerivedLine tone="green">
               {safePositiveNumber(bonusCredits) > 0
-                ? `Total developer credits: ${formatUnits(totalCredits)} including ${formatUnits(safePositiveNumber(bonusCredits))} bonus.`
-                : `Total developer credits: ${formatUnits(totalCredits)}.`}
+                ? `Total developer credits: ${formatFormCredits(totalCredits)} including ${formatFormCredits(safePositiveNumber(bonusCredits))} bonus.`
+                : `Total developer credits: ${formatFormCredits(totalCredits)}.`}
             </DerivedLine>
           </DrawerSection>
 
@@ -659,8 +661,8 @@ function DeveloperPreview({
         </div>
         <div className="text-right">
           <p className="text-xs text-slate-500">Credits</p>
-          <p className="mt-1 font-mono text-sm font-semibold text-slate-900">{formatUnits(includedCredits)}</p>
-          {bonusCredits > 0 ? <p className="mt-1 text-xs text-emerald-700">+ {formatUnits(bonusCredits)} bonus</p> : null}
+          <p className="mt-1 font-mono text-sm font-semibold text-slate-900">{formatFormCredits(includedCredits)}</p>
+          {bonusCredits > 0 ? <p className="mt-1 text-xs text-emerald-700">+ {formatFormCredits(bonusCredits)} bonus</p> : null}
         </div>
       </div>
       <p className="mt-4 text-xs leading-5 text-slate-500">This is how the package summary will appear to users.</p>
@@ -676,11 +678,11 @@ function validateForm(form: PackageForm): ValidationResult {
   if (!form.currency.trim()) {
     errors.currency = "Currency is required.";
   }
-  if (!isIntegerString(form.creditUnits) || Number(form.creditUnits) <= 0) {
-    errors.creditUnits = "Included credits must be greater than 0.";
+  if (!isCreditAmountString(form.creditUnits) || Number(form.creditUnits) <= 0) {
+    errors.creditUnits = "Included credits must be greater than 0 and use up to 6 decimals.";
   }
-  if (!isIntegerString(form.bonusCreditUnits) || Number(form.bonusCreditUnits) < 0) {
-    errors.bonusCreditUnits = "Bonus credits must be 0 or greater.";
+  if (!isCreditAmountString(form.bonusCreditUnits) || Number(form.bonusCreditUnits) < 0) {
+    errors.bonusCreditUnits = "Bonus credits must be 0 or greater and use up to 6 decimals.";
   }
   const parsedPrice = parseMoneyToMinor(form.price);
   if (!parsedPrice.ok) {
@@ -721,6 +723,10 @@ function safePositiveNumber(value: number) {
   return value;
 }
 
-function isIntegerString(value: string) {
-  return /^\d+$/.test(value.trim());
+function formatFormCredits(value: number) {
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 6 }).format(value);
+}
+
+function isCreditAmountString(value: string) {
+  return /^\d+(\.\d{1,6})?$/.test(value.trim());
 }
