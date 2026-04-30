@@ -42,6 +42,7 @@ Implemented now:
 - Credit balances
 - Credit ledger
 - Manual admin top-ups
+- Bakong KHQR package checkout through the slai-payment service with signed callbacks
 - Admin credit adjustments
 - Admin audit log writing and listing
 - API key creation, rotation, revocation, suspension, and resume
@@ -63,8 +64,8 @@ Implemented now:
 
 Not included yet:
 
-- Stripe or other payment provider integration
-- Customer self-serve top-ups
+- Official Bakong API settlement validation
+- Stripe or other card payment provider integration
 - Deep production reporting and support workflows
 - Multi-key user management beyond the MVP one-active-key rule
 
@@ -186,6 +187,23 @@ Usage sync worker settings:
 - `USAGE_SYNC_BATCH_LIMIT`
 - `USAGE_SYNC_START_DELAY_SECONDS`
 
+Storage and payment settings:
+
+- `STORAGE_DIR` stores legacy/fallback KHQR assets and payment proof files.
+- `PAYMENT_PROOF_MAX_MB` limits legacy proof uploads.
+- `PAYMENT_QR_MAX_MB` limits fallback KHQR image uploads.
+
+Automatic Bakong KHQR checkout settings:
+
+- `SLAI_PAYMENT_ENABLED` turns on slai-payment checkout for package purchases.
+- `SLAI_PAYMENT_BASE_URL` points SLAI at the slai-payment HTTP service.
+- `SLAI_PAYMENT_API_KEY` is optional if slai-payment protects API calls.
+- `SLAI_PAYMENT_CALLBACK_BASE_URL` is the public SLAI API base used in callback URLs.
+- `SLAI_PAYMENT_CALLBACK_SECRET` verifies signed callbacks. Do not reuse public secrets.
+- `SLAI_PAYMENT_MERCHANT_PREFIX` is passed to slai-payment when creating KHQR payments.
+- `SLAI_PAYMENT_DEFAULT_EXPIRY` controls checkout expiry, for example `30m`.
+- `SLAI_PAYMENT_HTTP_TIMEOUT` controls outbound provider calls.
+
 Frontend settings live in `apps/web/.env.example`:
 
 - `NEXT_PUBLIC_API_BASE_URL`
@@ -212,6 +230,40 @@ USAGE_SYNC_WORKER_ENABLED=true
 USAGE_SYNC_INTERVAL_SECONDS=60
 USAGE_SYNC_START_DELAY_SECONDS=10
 ```
+
+For local Bakong KHQR checkout with `slai-payment` running on port 8090:
+
+```sh
+SLAI_PAYMENT_ENABLED=true
+SLAI_PAYMENT_BASE_URL=http://localhost:8090
+SLAI_PAYMENT_CALLBACK_BASE_URL=http://localhost:8080
+SLAI_PAYMENT_CALLBACK_SECRET=<same-secret-as-slai-payment>
+SLAI_PAYMENT_MERCHANT_PREFIX=SLAI
+SLAI_PAYMENT_DEFAULT_EXPIRY=30m
+```
+
+`SLAI_PAYMENT_CALLBACK_BASE_URL` must be reachable by the slai-payment service. If slai-payment runs outside the same host network, use a public tunnel or deploy both services on a network where callbacks can reach SLAI.
+
+## Bakong KHQR Auto Payment MVP
+
+SLAI supports Bakong KHQR package checkout through the local `slai-payment` service:
+
+1. Admin enables and monitors provider configuration at `/admin/settings/payments`.
+2. User chooses a package from `/packages` or `/dashboard/billing`.
+3. SLAI creates a local `pending_payment` row and asks `slai-payment` to create a KHQR payment.
+4. The checkout page shows the provider-generated KHQR image, amount, reference, and expiry.
+5. User pays in their Bakong or bank app.
+6. `slai-payment` matches the bank/Telegram confirmation and sends SLAI a signed callback.
+7. SLAI verifies the HMAC signature over `timestamp + "." + raw_json_body`, validates amount/currency/reference, marks the payment `paid`, and creates a ledger `payment_credit`.
+8. Ledger crediting uses idempotency key `slai_payment_paid:{payment_id}`, so repeated callbacks do not double-credit.
+
+Callback headers are:
+
+- `X-SLAI-Payment-Timestamp`
+- `X-SLAI-Payment-Signature: v1=<hex-hmac-sha256>`
+- `X-SLAI-Payment-ID`
+
+Provider statuses map to SLAI statuses: `PENDING` -> `pending_payment`, `PAID` -> `paid`, `EXPIRED` -> `expired`, and unsafe or unknown provider states -> `needs_review`. Legacy manual proof endpoints remain for old records, but new checkouts should use slai-payment when `SLAI_PAYMENT_ENABLED=true`.
 
 ## OmniRoute Requirement
 

@@ -7,13 +7,13 @@ behalf.
 ## Boundaries
 
 - OmniRoute: AI gateway, provider routing, model calls, usage/call logs.
-- SLAI: users, credits, balances, manual top-ups, API key ownership, usage billing, admin
+- SLAI: users, credits, balances, package payments, manual admin top-ups, API key ownership, usage billing, admin
   operations, audit logs.
 
 ## MVP Rules
 
 - One active API key per user.
-- Manual admin-created top-ups only.
+- Users can create package checkouts through slai-payment; admins can still create manual top-ups.
 - Credits never expire.
 - Credits and money use integer units only.
 - Every balance change goes through `credit_ledger_entries`.
@@ -42,3 +42,13 @@ Automatic usage sync is handled by a background worker when `USAGE_SYNC_WORKER_E
 sync tick uses a PostgreSQL advisory lock so multiple API replicas do not process the same batch
 concurrently. Manual admin sync remains available through `POST /v1/admin/usage/sync`, and status is
 exposed through `GET /v1/admin/usage/sync-status`.
+
+## Bakong KHQR Payments
+
+Bakong KHQR package checkout is delegated to the `slai-payment` service. SLAI creates a local `pending_payment` row, calls `POST /api/payments` on slai-payment, stores the returned payment id/reference/QR payload, and shows the provider-generated KHQR on `/checkout/{payment_id}`.
+
+Payment confirmation is callback-driven. slai-payment signs the exact callback JSON body with `HMAC-SHA256(secret, timestamp + "." + raw_body)` and sends `X-SLAI-Payment-Timestamp`, `X-SLAI-Payment-Signature`, and `X-SLAI-Payment-ID`. SLAI verifies the signature and timestamp tolerance before trusting the payload.
+
+A provider `PAID` status only credits the balance after SLAI validates payment id/reference, amount, and currency. Crediting runs in a database transaction and uses ledger idempotency key `slai_payment_paid:{payment_id}`, so duplicate callbacks or manual refreshes cannot double-credit. Provider transaction ids are unique for paid Bakong payments when present; conflicts move the payment to `needs_review`.
+
+Legacy manual proof tables and endpoints remain for old records and fallback operation. Stored files live under `STORAGE_DIR/payment-settings` and `STORAGE_DIR/payment-proofs`; APIs return controlled file endpoints, never raw local paths.

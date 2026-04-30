@@ -17,12 +17,14 @@ type AdminShellProps = {
   children: React.ReactNode;
 };
 
-type AdminNavIconName = "overview" | "users" | "packages" | "usage" | "sync" | "audit";
+type AdminNavIconName = "overview" | "users" | "packages" | "payments" | "usage" | "sync" | "audit" | "settings";
 
 const navItems: { href: string; label: string; icon: AdminNavIconName }[] = [
   { href: "/admin", label: "Overview", icon: "overview" },
   { href: "/admin/users", label: "Users", icon: "users" },
   { href: "/admin/packages", label: "Packages", icon: "packages" },
+  { href: "/admin/payments", label: "Payments", icon: "payments" },
+  { href: "/admin/settings/payments", label: "Payment Settings", icon: "settings" },
   { href: "/admin/usage", label: "Usage", icon: "usage" },
   { href: "/admin/sync", label: "Sync", icon: "sync" },
   { href: "/admin/audit", label: "Audit Logs", icon: "audit" }
@@ -248,6 +250,21 @@ function AdminNavIcon({ name }: { name: AdminNavIconName }) {
         <path d="m4 8.5 8 4.5v7l-8-4.5v-7Z" />
         <path d="m20 8.5-8 4.5v7l8-4.5v-7Z" />
         <path d="M8 6.25 16 10.75" />
+      </>
+    ),
+    payments: (
+      <>
+        <path d="M4 7h16" />
+        <path d="M6 7V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2" />
+        <path d="M6 7v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7" />
+        <path d="M9 12h6" />
+        <path d="M9 16h4" />
+      </>
+    ),
+    settings: (
+      <>
+        <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
+        <path d="M19.4 15a1.8 1.8 0 0 0 .36 1.98l.05.05a2 2 0 0 1-2.83 2.83l-.05-.05a1.8 1.8 0 0 0-1.98-.36 1.8 1.8 0 0 0-1.1 1.66V21a2 2 0 0 1-4 0v-.09a1.8 1.8 0 0 0-1.1-1.66 1.8 1.8 0 0 0-1.98.36l-.05.05a2 2 0 0 1-2.83-2.83l.05-.05A1.8 1.8 0 0 0 4.6 15a1.8 1.8 0 0 0-1.66-1.1H3a2 2 0 0 1 0-4h.09A1.8 1.8 0 0 0 4.75 8.8a1.8 1.8 0 0 0-.36-1.98l-.05-.05A2 2 0 1 1 7.17 3.94l.05.05a1.8 1.8 0 0 0 1.98.36h.01A1.8 1.8 0 0 0 10.3 2.7V2a2 2 0 0 1 4 0v.09a1.8 1.8 0 0 0 1.1 1.66 1.8 1.8 0 0 0 1.98-.36l.05-.05a2 2 0 1 1 2.83 2.83l-.05.05a1.8 1.8 0 0 0-.36 1.98v.01a1.8 1.8 0 0 0 1.66 1.09H21a2 2 0 0 1 0 4h-.09A1.8 1.8 0 0 0 19.4 15Z" />
       </>
     ),
     usage: (

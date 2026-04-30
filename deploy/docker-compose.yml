@@ -40,6 +40,17 @@ services:
       USAGE_SYNC_LOCK_KEY: slai_usage_sync
       USAGE_SYNC_BATCH_LIMIT: ""
       USAGE_SYNC_START_DELAY_SECONDS: "10"
+      STORAGE_DIR: /app/storage
+      PAYMENT_PROOF_MAX_MB: "5"
+      PAYMENT_QR_MAX_MB: "2"
+      SLAI_PAYMENT_ENABLED: "false"
+      SLAI_PAYMENT_BASE_URL: http://slai-payment:8090
+      SLAI_PAYMENT_API_KEY: ""
+      SLAI_PAYMENT_CALLBACK_BASE_URL: http://api:8080
+      SLAI_PAYMENT_CALLBACK_SECRET: dev-only-change-me-payment-callback-secret
+      SLAI_PAYMENT_MERCHANT_PREFIX: SLAI
+      SLAI_PAYMENT_DEFAULT_EXPIRY: 30m
+      SLAI_PAYMENT_HTTP_TIMEOUT: 10s
     command: ["/app/slai-api", "migrate", "up"]
     depends_on:
       postgres:
@@ -76,6 +87,19 @@ services:
       USAGE_SYNC_LOCK_KEY: slai_usage_sync
       USAGE_SYNC_BATCH_LIMIT: ""
       USAGE_SYNC_START_DELAY_SECONDS: "10"
+      STORAGE_DIR: /app/storage
+      PAYMENT_PROOF_MAX_MB: "5"
+      PAYMENT_QR_MAX_MB: "2"
+      SLAI_PAYMENT_ENABLED: "false"
+      SLAI_PAYMENT_BASE_URL: http://slai-payment:8090
+      SLAI_PAYMENT_API_KEY: ""
+      SLAI_PAYMENT_CALLBACK_BASE_URL: http://api:8080
+      SLAI_PAYMENT_CALLBACK_SECRET: dev-only-change-me-payment-callback-secret
+      SLAI_PAYMENT_MERCHANT_PREFIX: SLAI
+      SLAI_PAYMENT_DEFAULT_EXPIRY: 30m
+      SLAI_PAYMENT_HTTP_TIMEOUT: 10s
+    volumes:
+      - storage_data:/app/storage
     ports:
       - "8080:8080"
     depends_on:
@@ -103,3 +127,4 @@ services:
 
 volumes:
   postgres_data:
+  storage_data:

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { AppShell } from "@/components/AppShell";
 import { Badge } from "@/components/Badge";
@@ -18,15 +19,15 @@ const secondaryLink =
 
 const faqs = [
   ["Do credits expire?", "No. SLAI prepaid credits do not expire."],
-  ["How is usage billed?", "Usage is synced from OmniRoute and debited from your SLAI ledger balance."],
+  ["How is usage billed?", "Usage is synced automatically and debited from your SLAI ledger balance."],
   ["Can I create multiple API keys?", "The MVP supports one active API key per user."],
-  ["Can I buy directly?", "Self-serve checkout is not enabled in the MVP. Administrators add credits after payment confirmation."]
+  ["Can I buy directly?", "Logged-in users can choose a package and pay with Bakong KHQR. Stripe checkout is not enabled in the MVP."]
 ];
 
-function PackageCard({ pkg, loggedIn }: { pkg: CreditPackage; loggedIn: boolean }) {
+function PackageCard({ pkg, loggedIn, choosing, onChoose }: { pkg: CreditPackage; loggedIn: boolean; choosing: boolean; onChoose: () => void }) {
   const totalCredits = pkg.creditUnits + pkg.bonusCreditUnits;
-  const primaryHref = loggedIn ? "/dashboard/billing" : "/signup";
-  const primaryLabel = loggedIn ? "Open billing" : "Create account";
+  const primaryHref = loggedIn ? undefined : "/signup";
+  const primaryLabel = loggedIn ? "Choose package" : "Create account";
 
   return (
     <Card className="relative overflow-hidden rounded-2xl p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-lg">
@@ -35,14 +36,14 @@ function PackageCard({ pkg, loggedIn }: { pkg: CreditPackage; loggedIn: boolean 
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-lg font-semibold text-slate-950">{pkg.name}</h2>
-            <p className="mt-2 min-h-12 text-sm leading-6 text-slate-500">{pkg.description ?? "Prepaid SLAI credits for OmniRoute usage."}</p>
+            <p className="mt-2 min-h-12 text-sm leading-6 text-slate-500">{pkg.description ?? "Prepaid SLAI credits for AI usage."}</p>
           </div>
           {pkg.bonusCreditUnits > 0 ? <Badge tone="blue">Bonus</Badge> : null}
         </div>
 
         <div className="mt-6">
           <p className="text-4xl font-semibold tracking-normal text-slate-950">{formatMoney(pkg.priceMinor, pkg.currency)}</p>
-          <p className="mt-1 text-sm text-slate-500">Administrator-confirmed top-up</p>
+          <p className="mt-1 text-sm text-slate-500">Bakong KHQR checkout</p>
         </div>
 
         <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -68,8 +69,12 @@ function PackageCard({ pkg, loggedIn }: { pkg: CreditPackage; loggedIn: boolean 
         </div>
 
         <div className="mt-auto pt-6">
-          <Link href={primaryHref} className={primaryLink}>{primaryLabel}</Link>
-          <p className="mt-3 text-xs leading-5 text-slate-500">Manual top-up only in MVP. No direct checkout is available yet.</p>
+          {primaryHref ? (
+            <Link href={primaryHref} className={primaryLink}>{primaryLabel}</Link>
+          ) : (
+            <button className={primaryLink} type="button" onClick={onChoose} disabled={choosing}>{choosing ? "Creating checkout" : primaryLabel}</button>
+          )}
+          <p className="mt-3 text-xs leading-5 text-slate-500">Pay with Bakong KHQR. Credits are added after payment confirmation.</p>
         </div>
       </div>
     </Card>
@@ -90,30 +95,33 @@ function EmptyPackages({ loggedIn }: { loggedIn: boolean }) {
   );
 }
 
-function ManualTopUpCallout() {
+function PaymentCheckoutCallout() {
   return (
     <Card className="rounded-2xl border-amber-200 bg-gradient-to-r from-amber-50 via-white to-blue-50 p-5 shadow-sm">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div className="flex gap-3">
           <span className="mt-0.5 grid size-10 shrink-0 place-items-center rounded-xl bg-amber-100 text-sm font-bold text-amber-700">M</span>
           <div>
-            <CardTitle>Manual top-up only</CardTitle>
+            <CardTitle>Bakong KHQR checkout</CardTitle>
             <CardDescription className="mt-1 text-amber-800/80">
-              Self-serve checkout is not enabled yet. Administrators add credits after payment confirmation.
+              Choose a package, scan the KHQR, and SLAI credits your balance after payment confirmation.
             </CardDescription>
           </div>
         </div>
-        <span className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-600 shadow-sm ring-1 ring-slate-200">No Stripe checkout in MVP</span>
+        <span className="rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-600 shadow-sm ring-1 ring-slate-200">Stripe checkout not enabled</span>
       </div>
     </Card>
   );
 }
 
 export default function PackagesPage() {
+  const router = useRouter();
   const [packages, setPackages] = useState<CreditPackage[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [loadingPackages, setLoadingPackages] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [choosingPackageId, setChoosingPackageId] = useState<string | null>(null);
   const loggedIn = currentUser !== null;
 
   function load() {
@@ -137,6 +145,23 @@ export default function PackagesPage() {
         }
       });
   }, []);
+
+  async function choosePackage(packageId: string) {
+    if (!loggedIn) {
+      router.push("/signup");
+      return;
+    }
+    setChoosingPackageId(packageId);
+    setCheckoutError(null);
+    try {
+      const response = await api.checkout.package(packageId);
+      router.push(`/checkout/${response.payment.id}`);
+    } catch (err) {
+      setCheckoutError(readableError(err));
+    } finally {
+      setChoosingPackageId(null);
+    }
+  }
 
   const packageTotals = useMemo(() => {
     return packages.reduce(
@@ -185,16 +210,17 @@ export default function PackagesPage() {
       </section>
 
       <div className="mt-6">
-        <ManualTopUpCallout />
+        <PaymentCheckoutCallout />
       </div>
 
       <section className="mt-8">
+        {checkoutError ? <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{checkoutError}</div> : null}
         {loadingPackages ? <LoadingState label="Loading packages" /> : null}
         {error ? <ErrorState message={error} onRetry={load} /> : null}
         {!loadingPackages && !error && packages.length === 0 ? <EmptyPackages loggedIn={loggedIn} /> : null}
         {!loadingPackages && !error && packages.length > 0 ? (
           <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-            {packages.map((pkg) => <PackageCard key={pkg.id} pkg={pkg} loggedIn={loggedIn} />)}
+            {packages.map((pkg) => <PackageCard key={pkg.id} pkg={pkg} loggedIn={loggedIn} choosing={choosingPackageId === pkg.id} onChoose={() => choosePackage(pkg.id)} />)}
           </div>
         ) : null}
       </section>

@@ -10,7 +10,7 @@ import { ErrorState } from "@/components/ErrorState";
 import { LoadingState } from "@/components/LoadingState";
 import { api, isNotFound, readableError, type Balance, type LedgerEntry, type PublicAPIKey, type UsageEvent } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { formatCompactCredits, formatCompactUnits, formatCredits, formatDateTime, formatDelta } from "@/lib/format";
+import { formatCompactCredits, formatCompactUnits, formatCredits, formatDateTime, formatDelta, formatLedgerReason } from "@/lib/format";
 
 type DashboardData = {
   balance: Balance | null;
@@ -25,7 +25,7 @@ const secondaryButton =
   "inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50";
 const ghostLink = "text-sm font-semibold text-blue-700 hover:text-blue-800";
 const quickstartCurl = [
-  "curl https://YOUR_OMNIROUTE_DOMAIN/v1/chat/completions \\",
+  "curl https://YOUR_SLAI_GATEWAY_DOMAIN/v1/chat/completions \\",
   '  -H "Authorization: Bearer YOUR_API_KEY" \\',
   '  -H "Content-Type: application/json"'
 ].join("\n");
@@ -166,7 +166,7 @@ function CurrentAPIKeyCard({ apiKey }: { apiKey: PublicAPIKey | null }) {
             <dl className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <DetailItem label="Created" value={formatDateTime(apiKey.created_at)} />
               <DetailItem label="Last used" value={formatDateTime(apiKey.last_used_at)} />
-              <DetailItem label="OmniRoute" value={apiKey.omniroute_linked ? "Linked" : "Local/dev mode"} />
+              <DetailItem label="Access" value="Managed by SLAI" />
               <DetailItem label="Name" value={apiKey.name || "Default key"} />
             </dl>
           </div>
@@ -178,7 +178,7 @@ function CurrentAPIKeyCard({ apiKey }: { apiKey: PublicAPIKey | null }) {
       ) : (
         <PanelEmpty
           title="No API key"
-          message="Create one active key to call OmniRoute through SLAI billing. The raw key is shown once."
+          message="Create one active key to send SLAI-billed AI requests. The raw key is shown once."
           action={<Link className={primaryButton} href="/dashboard/api-key">Create API key</Link>}
           compact={false}
         />
@@ -200,7 +200,7 @@ function QuickstartCard({ hasKey }: { hasKey: boolean }) {
       <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 shadow-sm">
         <div className="flex items-center justify-between border-b border-white/10 px-4 py-2.5">
           <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">curl</span>
-          <span className="rounded-md bg-white/10 px-2 py-1 text-xs font-medium text-slate-300">OmniRoute</span>
+          <span className="rounded-md bg-white/10 px-2 py-1 text-xs font-medium text-slate-300">SLAI API</span>
         </div>
         <pre className="overflow-x-auto p-4 text-xs leading-6 text-slate-100 sm:text-sm">
           <code>{quickstartCurl}</code>
@@ -237,7 +237,7 @@ function RecentUsagePanel({ usage }: { usage: UsageEvent[] }) {
 
   return (
     <Card className="rounded-2xl p-0">
-      <SectionHeader title="Recent usage" description="Latest synced OmniRoute events." href="/dashboard/usage" linkLabel="View all" />
+      <SectionHeader title="Recent usage" description="Latest synced usage events." href="/dashboard/usage" linkLabel="View all" />
 
       {hasUsage ? (
         <div className="divide-y divide-slate-100">
@@ -259,7 +259,7 @@ function RecentUsagePanel({ usage }: { usage: UsageEvent[] }) {
         </div>
       ) : (
         <div className="p-4">
-          <PanelEmpty title="No usage yet" message="Usage appears after OmniRoute call logs are synced." />
+          <PanelEmpty title="No usage yet" message="Usage appears after provider logs are synced." />
         </div>
       )}
     </Card>
@@ -285,7 +285,7 @@ function RecentLedgerPanel({ ledger }: { ledger: LedgerEntry[] }) {
                       <Badge dot tone={isCredit ? "green" : "yellow"}>{entry.type}</Badge>
                       <span className="text-xs text-slate-500">{formatDateTime(entry.createdAt)}</span>
                     </div>
-                    <p className="mt-2 truncate text-sm text-slate-600">{entry.reason ?? entry.source ?? "Ledger entry"}</p>
+                    <p className="mt-2 truncate text-sm text-slate-600">{formatLedgerReason(entry)}</p>
                   </div>
                   <div className="shrink-0 text-right">
                     <p className={cn("text-sm font-semibold", isCredit ? "text-emerald-700" : "text-slate-950")}>{formatDelta(entry.deltaUnits)}</p>
@@ -400,7 +400,7 @@ export default function DashboardPage() {
                 <StatPill label="Backing" value="Ledger" />
               </div>
             </HeroMetricCard>
-            <HeroMetricCard label="Lifetime used" value={formatCredits(usedCredits)} hint="Synced from OmniRoute logs">
+            <HeroMetricCard label="Lifetime used" value={formatCredits(usedCredits)} hint="Synced from provider logs">
               {purchasedCredits > 0 ? (
                 <div>
                   <div className="h-2 rounded-full bg-slate-100">
@@ -410,7 +410,7 @@ export default function DashboardPage() {
                 </div>
               ) : <p className="text-xs text-slate-500">No usage debits yet</p>}
             </HeroMetricCard>
-            <HeroMetricCard label="API key status" value={apiKeyStatus} hint={data.apiKey?.key_prefix ?? "Create one key to call OmniRoute"}>
+            <HeroMetricCard label="API key status" value={apiKeyStatus} hint={data.apiKey?.key_prefix ?? "Create one key to send requests"}>
               <Badge dot tone={data.apiKey ? statusTone(data.apiKey.status) : "neutral"}>{apiKeyStatus}</Badge>
             </HeroMetricCard>
             <HeroMetricCard label="Lifetime purchased" value={formatCredits(purchasedCredits)} hint="Admin-managed manual top-ups">

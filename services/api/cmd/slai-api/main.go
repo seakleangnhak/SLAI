@@ -19,6 +19,7 @@ import (
 	"github.com/slai/slai/services/api/internal/omniroute"
 	platformdb "github.com/slai/slai/services/api/internal/platform/db"
 	httpserver "github.com/slai/slai/services/api/internal/platform/http"
+	"github.com/slai/slai/services/api/internal/slaipayment"
 	"github.com/slai/slai/services/api/internal/users"
 )
 
@@ -84,17 +85,33 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		omniRouteClient = client
 	}
 
+	var slaiPaymentClient slaipayment.Client
+	if cfg.SLAIPayment.Enabled {
+		client, err := slaipayment.NewHTTPClient(slaipayment.Config{
+			BaseURL: cfg.SLAIPayment.BaseURL,
+			APIKey:  cfg.SLAIPayment.APIKey,
+			Timeout: cfg.SLAIPayment.HTTPTimeout,
+		})
+		if err != nil {
+			return fmt.Errorf("configure slai payment client: %w", err)
+		}
+		slaiPaymentClient = client
+	}
+
 	server := httpserver.NewServer(httpserver.ServerConfig{
-		Addr:             cfg.HTTPAddr,
-		ReadinessTimeout: cfg.ReadinessTimeout,
-		SessionSecret:    cfg.SessionSecret,
-		CookieSecure:     cfg.CookieSecure,
-		SessionTTL:       cfg.SessionTTL,
-		APIKeyPepper:     cfg.APIKeyPepper,
-		APIKeyPrefix:     cfg.APIKeyPrefix,
-		OmniRoute:        cfg.OmniRoute,
-		OmniRouteClient:  omniRouteClient,
-		UsageSyncWorker:  cfg.UsageSyncWorker,
+		Addr:              cfg.HTTPAddr,
+		ReadinessTimeout:  cfg.ReadinessTimeout,
+		SessionSecret:     cfg.SessionSecret,
+		CookieSecure:      cfg.CookieSecure,
+		SessionTTL:        cfg.SessionTTL,
+		APIKeyPepper:      cfg.APIKeyPepper,
+		APIKeyPrefix:      cfg.APIKeyPrefix,
+		OmniRoute:         cfg.OmniRoute,
+		OmniRouteClient:   omniRouteClient,
+		UsageSyncWorker:   cfg.UsageSyncWorker,
+		Storage:           cfg.Storage,
+		SLAIPayment:       cfg.SLAIPayment,
+		SLAIPaymentClient: slaiPaymentClient,
 	}, pool, logger)
 
 	server.StartUsageSyncWorker(ctx)

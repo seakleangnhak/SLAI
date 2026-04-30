@@ -122,9 +122,17 @@ export function AppShell({ children, section = "public", user, logoutRedirect }:
             </div>
             <div className="flex flex-wrap gap-3">
               <Link className="hover:text-slate-950" href="/packages">Packages</Link>
-              <Link className="hover:text-slate-950" href="/login">Sign in</Link>
-              <Link className="hover:text-slate-950" href="/signup">Create account</Link>
-              <Link className="text-slate-400 hover:text-slate-700" href="/admin/login">Admin console</Link>
+              {user ? (
+                <>
+                  <Link className="hover:text-slate-950" href="/dashboard">Dashboard</Link>
+                  <Link className="hover:text-slate-950" href="/dashboard/billing">Billing</Link>
+                </>
+              ) : (
+                <>
+                  <Link className="hover:text-slate-950" href="/login">Sign in</Link>
+                  <Link className="hover:text-slate-950" href="/signup">Create account</Link>
+                </>
+              )}
             </div>
           </div>
         </footer>

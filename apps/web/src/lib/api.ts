@@ -45,16 +45,146 @@ export type Payment = {
   id: string;
   userId: string;
   packageId?: string | null;
+  packageName?: string | null;
   provider: string;
   providerRef?: string | null;
+  externalPaymentId?: string | null;
+  checkoutReference?: string | null;
+  qrPayload?: string | null;
+  qrImageDataUri?: string | null;
+  qrMd5?: string | null;
+  expiresAt?: string | null;
+  callbackReceivedAt?: string | null;
+  providerStatus?: string | null;
+  providerTransactionId?: string | null;
+  providerApv?: string | null;
   amountMinor: number;
   currency: string;
   creditUnits: number;
   status: string;
   adminId?: string | null;
   note?: string | null;
+  proofUploaded?: boolean;
+  rejectionReason?: string | null;
+  adminPaymentReference?: string | null;
+  reviewedByAdminId?: string | null;
+  reviewedAt?: string | null;
   createdAt: string;
+  updatedAt?: string;
   paidAt?: string | null;
+};
+
+export type CheckoutInfo = {
+  provider: string;
+  display_name: string;
+  account_name?: string | null;
+  account_id?: string | null;
+  khqr_image_url?: string | null;
+  qr_payload?: string | null;
+  qr_image_data_uri?: string | null;
+  reference?: string | null;
+  expires_at?: string | null;
+  instructions?: string | null;
+};
+
+export type CheckoutResponse = {
+  payment: Payment;
+  checkout: CheckoutInfo;
+};
+
+export type PaymentSettings = {
+  provider: string;
+  enabled: boolean;
+  display_name: string;
+  account_name?: string | null;
+  account_id?: string | null;
+  khqr_image_url?: string | null;
+  instructions?: string | null;
+  updated_at: string;
+};
+
+export type PaymentSettingsInput = {
+  enabled: boolean;
+  display_name: string;
+  account_name?: string | null;
+  account_id?: string | null;
+  instructions?: string | null;
+};
+
+export type PaymentProviderStatus = {
+  provider: string;
+  mode: string;
+  enabled: boolean;
+  base_url_configured: boolean;
+  api_key_configured: boolean;
+  callback_base_url_configured: boolean;
+  callback_secret_configured: boolean;
+  merchant_prefix?: string;
+  default_expiry_seconds: number;
+};
+
+export type AdminPaymentItem = {
+  id: string;
+  user_id: string;
+  user_email: string;
+  package_id?: string | null;
+  package_name?: string | null;
+  provider: string;
+  provider_ref?: string | null;
+  external_payment_id?: string | null;
+  checkout_reference?: string | null;
+  expires_at?: string | null;
+  provider_status?: string | null;
+  provider_transaction_id?: string | null;
+  provider_apv?: string | null;
+  amount_minor: number;
+  currency: string;
+  credit_units: number;
+  status: string;
+  admin_id?: string | null;
+  note?: string | null;
+  created_at: string;
+  updated_at: string;
+  paid_at?: string | null;
+  proof_uploaded: boolean;
+  proof_file_sha256?: string | null;
+  duplicate_proof_count: number;
+  reviewed_by_admin_id?: string | null;
+  reviewed_by_admin_email?: string | null;
+  reviewed_at?: string | null;
+  admin_payment_reference?: string | null;
+  rejection_reason?: string | null;
+  proof?: PaymentProof | null;
+};
+
+export type PaymentProof = {
+  id: string;
+  payment_id: string;
+  user_id: string;
+  file_name: string;
+  file_mime: string;
+  file_size: number;
+  file_sha256: string;
+  user_transaction_ref?: string | null;
+  user_note?: string | null;
+  uploaded_at: string;
+};
+
+export type AdminPaymentListResponse = {
+  items: AdminPaymentItem[];
+  limit: number;
+  offset: number;
+  total: number;
+};
+
+export type AdminPaymentFilter = {
+  status?: string;
+  user_id?: string;
+  provider?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  offset?: number;
 };
 
 
@@ -409,6 +539,10 @@ function buildUrl(path: string) {
   return `${API_PROXY_BASE}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
+export function apiAssetUrl(path: string) {
+  return buildUrl(path);
+}
+
 async function parseResponse(response: Response) {
   const contentType = response.headers.get("content-type") ?? "";
   if (contentType.includes("application/json")) {
@@ -416,6 +550,27 @@ async function parseResponse(response: Response) {
   }
   const text = await response.text();
   return text ? { message: text } : null;
+}
+
+export async function apiUpload<T>(path: string, formData: FormData, options: Omit<RequestInit, "body"> = {}): Promise<T> {
+  const response = await fetch(buildUrl(path), {
+    ...options,
+    method: options.method ?? "POST",
+    body: formData,
+    credentials: "include"
+  });
+  const payload = await parseResponse(response);
+  if (!response.ok) {
+    const code = typeof payload?.error === "string" ? payload.error : undefined;
+    const message =
+      typeof payload?.message === "string"
+        ? payload.message
+        : code
+          ? code.replaceAll("_", " ")
+          : `Request failed with ${response.status}`;
+    throw new ApiError(message, response.status, code);
+  }
+  return payload as T;
 }
 
 export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
@@ -523,7 +678,17 @@ export const api = {
     list: (limit = 50) => apiFetch<{ ledger: LedgerEntry[] }>(`/v1/ledger${toQuery({ limit })}`)
   },
   payments: {
-    list: (limit = 50, offset = 0) => apiFetch<{ payments: Payment[] }>(`/v1/payments${toQuery({ limit, offset })}`)
+    list: (limit = 50, offset = 0) => apiFetch<{ payments: Payment[] }>(`/v1/payments${toQuery({ limit, offset })}`),
+    get: (id: string) => apiFetch<{ payment: Payment }>(`/v1/payments/${id}`),
+    refresh: (id: string) => apiFetch<{ payment: Payment }>(`/v1/payments/${id}/refresh`, { method: "POST" }),
+    proofUrl: (id: string) => apiAssetUrl(`/v1/payments/${id}/proof`),
+    uploadProof: (id: string, formData: FormData) =>
+      apiUpload<{ payment: Payment }>(`/v1/payments/${id}/proof`, formData)
+  },
+  checkout: {
+    package: (packageId: string) =>
+      apiFetch<CheckoutResponse>(`/v1/checkout/package/${packageId}`, { method: "POST" }),
+    bakongSettings: () => apiFetch<{ settings: PaymentSettings }>("/v1/payment-settings/bakong-khqr")
   },
   usage: {
     list: (filterOrLimit: UserUsageFilter | number = 50, offset = 0) => {
@@ -573,11 +738,40 @@ export const api = {
         })
     },
     payments: {
+      list: (filter: AdminPaymentFilter = {}) =>
+        apiFetch<AdminPaymentListResponse>(`/v1/admin/payments${toQuery(filter)}`),
+      get: (id: string) => apiFetch<{ payment: AdminPaymentItem }>(`/v1/admin/payments/${id}`),
+      proofUrl: (id: string) => apiAssetUrl(`/v1/admin/payments/${id}/proof`),
+      approve: (id: string, paymentReference: string, note?: string | null) =>
+        apiFetch(`/v1/admin/payments/${id}/approve`, {
+          method: "POST",
+          body: { payment_reference: paymentReference, note }
+        }),
+      reject: (id: string, reason: string) =>
+        apiFetch<{ payment: Payment }>(`/v1/admin/payments/${id}/reject`, {
+          method: "POST",
+          body: { reason }
+        }),
       manualTopUp: (input: ManualTopUpInput) =>
         apiFetch("/v1/admin/payments/manual-topup", {
           method: "POST",
           body: scaleManualTopUpInput(input)
         })
+    },
+    paymentSettings: {
+      bakong: {
+        get: () => apiFetch<{ settings: PaymentSettings }>("/v1/admin/payment-settings/bakong-khqr"),
+        update: (input: PaymentSettingsInput) =>
+          apiFetch<{ settings: PaymentSettings }>("/v1/admin/payment-settings/bakong-khqr", {
+            method: "PATCH",
+            body: input
+          }),
+        uploadImage: (formData: FormData) =>
+          apiUpload<{ settings: PaymentSettings }>("/v1/admin/payment-settings/bakong-khqr/khqr-image", formData),
+        providerStatus: () =>
+          apiFetch<{ provider_status: PaymentProviderStatus }>("/v1/admin/payment-settings/bakong-khqr/provider-status"),
+        imageUrl: () => apiAssetUrl("/v1/payment-settings/bakong-khqr/khqr-image")
+      }
     },
     ledger: {
       adjustment: (input: AdjustmentInput) =>

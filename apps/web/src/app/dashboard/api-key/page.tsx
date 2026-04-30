@@ -38,12 +38,12 @@ function modeLabel(apiKey: PublicAPIKey | null) {
   if (!apiKey) {
     return "Managed by SLAI";
   }
-  return apiKey.omniroute_linked ? "OmniRoute linked" : "Local/dev mode";
+  return "Managed by SLAI";
 }
 
 function quickstartCurl(rawKey: string | null) {
   return [
-    "curl https://YOUR_OMNIROUTE_DOMAIN/v1/chat/completions \\",
+    "curl https://YOUR_SLAI_GATEWAY_DOMAIN/v1/chat/completions \\",
     '  -H "Authorization: Bearer ' + (rawKey ?? "YOUR_API_KEY") + '" \\',
     '  -H "Content-Type: application/json"'
   ].join("\n");
@@ -77,7 +77,7 @@ function EmptyKeyState({ onCreateFocus }: { onCreateFocus: () => void }) {
     <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-5 py-8 text-center">
       <span className="mx-auto grid size-10 place-items-center rounded-full bg-white font-mono text-sm font-semibold text-blue-700 shadow-sm ring-1 ring-slate-200">sk</span>
       <h3 className="mt-4 text-base font-semibold text-slate-950">No API key</h3>
-      <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">Create your one active key to call OmniRoute through SLAI billing.</p>
+      <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">Create your one active key to send SLAI-billed AI requests.</p>
       <Button className="mt-5 rounded-lg" type="button" onClick={onCreateFocus}>Create API key</Button>
     </div>
   );
@@ -280,7 +280,7 @@ function QuickstartCard({ rawKey }: { rawKey: string | null }) {
       <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 shadow-sm">
         <div className="flex items-center justify-between border-b border-white/10 px-4 py-2.5">
           <span className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">curl</span>
-          <span className="rounded-md bg-white/10 px-2 py-1 text-xs font-medium text-slate-300">OmniRoute</span>
+          <span className="rounded-md bg-white/10 px-2 py-1 text-xs font-medium text-slate-300">SLAI API</span>
         </div>
         <pre className="overflow-x-auto p-4 text-xs leading-6 text-slate-100 sm:text-sm"><code>{quickstartCurl(rawKey)}</code></pre>
       </div>
@@ -432,7 +432,7 @@ export default function APIKeyPage() {
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">Developer key</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-normal text-slate-950 sm:text-4xl">API key</h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-500">Manage the key used to send SLAI-billed requests through OmniRoute.</p>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-500">Manage the key used to send SLAI-billed AI requests.</p>
           </div>
           {apiKey && !keyRevoked ? (
             <button className={primaryButton} type="button" onClick={() => setPendingConfirm("rotate")} disabled={actionLoading}>{headerActionLabel}</button>
@@ -453,7 +453,7 @@ export default function APIKeyPage() {
             </SummaryCard>
             <SummaryCard label="Key prefix" value={apiKey?.key_prefix ?? "-"} hint="Safe display identifier" />
             <SummaryCard label="Last used" value={safeDate(apiKey?.last_used_at)} hint="From synced key metadata" />
-            <SummaryCard label="Mode" value={modeLabel(apiKey)} hint="SLAI-billed OmniRoute access" />
+            <SummaryCard label="Mode" value={modeLabel(apiKey)} hint="SLAI-billed API access" />
           </section>
 
           <div className="mt-6 space-y-3">

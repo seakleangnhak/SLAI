@@ -3,15 +3,21 @@ package httpserver_test
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +29,7 @@ import (
 	"github.com/slai/slai/services/api/internal/ledger"
 	platformdb "github.com/slai/slai/services/api/internal/platform/db"
 	httpserver "github.com/slai/slai/services/api/internal/platform/http"
+	"github.com/slai/slai/services/api/internal/slaipayment"
 	"github.com/slai/slai/services/api/internal/users"
 )
 
@@ -150,7 +157,7 @@ func TestAdminDashboardRequiresAdminAndReturnsMetrics(t *testing.T) {
 		"userId":      user.ID,
 		"amountMinor": 2500,
 		"currency":    "USD",
-		"creditUnits": 25000,
+		"creditUnits": 2500000000,
 	}, adminCookies)
 	assertStatus(t, topup, http.StatusCreated)
 
@@ -181,7 +188,7 @@ func TestAdminDashboardRequiresAdminAndReturnsMetrics(t *testing.T) {
 	if got := numberField(t, dashboard.JSON, "users.total"); got != 2 {
 		t.Fatalf("users.total = %v", got)
 	}
-	if got := numberField(t, dashboard.JSON, "credits.total_purchased_units"); got != 25000 {
+	if got := numberField(t, dashboard.JSON, "credits.total_purchased_units"); got != 2500000000 {
 		t.Fatalf("credits.total_purchased_units = %v", got)
 	}
 	if got := numberField(t, dashboard.JSON, "revenue.total_paid_minor"); got != 2500 {
@@ -300,7 +307,7 @@ func TestAdminUserDetailDoesNotExposeSecretsAndIncludesRelatedData(t *testing.T)
 		"userId":      user.ID,
 		"amountMinor": 2500,
 		"currency":    "USD",
-		"creditUnits": 25000,
+		"creditUnits": 2500000000,
 	}, adminCookies)
 	assertStatus(t, topup, http.StatusCreated)
 
@@ -330,7 +337,7 @@ func TestAdminUserDetailDoesNotExposeSecretsAndIncludesRelatedData(t *testing.T)
 	if got := stringField(t, detail.JSON, "email"); got != user.Email {
 		t.Fatalf("email = %q", got)
 	}
-	if got := numberField(t, detail.JSON, "balance.lifetime_purchased_units"); got != 25000 {
+	if got := numberField(t, detail.JSON, "balance.lifetime_purchased_units"); got != 2500000000 {
 		t.Fatalf("lifetime_purchased_units = %v", got)
 	}
 	if got := stringField(t, detail.JSON, "api_key.status"); got != "ACTIVE" {
@@ -579,6 +586,230 @@ func TestManualTopUpLedgerMutationAndBalanceUpdate(t *testing.T) {
 	}
 	if auditCount != 1 {
 		t.Fatalf("audit count = %d", auditCount)
+	}
+}
+
+func TestBakongKHQRManualPaymentFlow(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	client := newTestClient(t)
+	adminUser := createUser(t, "admin@example.com", users.RoleAdmin)
+	user := createUser(t, "bakong-user@example.com", users.RoleUser)
+	otherUser := createUser(t, "other-bakong-user@example.com", users.RoleUser)
+	adminCookies := loginCookies(t, client, adminUser.Email)
+	userCookies := loginCookies(t, client, user.Email)
+	otherCookies := loginCookies(t, client, otherUser.Email)
+
+	pkgResp := client.post(t, "/v1/admin/packages", map[string]any{
+		"name":             "Starter",
+		"description":      "Starter package",
+		"creditUnits":      1000000,
+		"bonusCreditUnits": 250000,
+		"priceMinor":       100,
+		"currency":         "USD",
+		"active":           true,
+	}, adminCookies)
+	assertStatus(t, pkgResp, http.StatusCreated)
+	packageID := stringField(t, pkgResp.JSON, "package.id")
+
+	disabledCheckout := client.post(t, "/v1/checkout/package/"+packageID, map[string]any{}, userCookies)
+	assertStatus(t, disabledCheckout, http.StatusBadRequest)
+
+	forbiddenSettings := client.patch(t, "/v1/admin/payment-settings/bakong-khqr", map[string]any{
+		"enabled":      true,
+		"display_name": "Bakong KHQR",
+		"account_name": "SLAI Co",
+		"account_id":   "012345678",
+	}, userCookies)
+	assertStatus(t, forbiddenSettings, http.StatusForbidden)
+
+	invalidSettings := client.patch(t, "/v1/admin/payment-settings/bakong-khqr", map[string]any{
+		"enabled":      true,
+		"display_name": "Bakong KHQR",
+	}, adminCookies)
+	assertStatus(t, invalidSettings, http.StatusBadRequest)
+
+	settings := client.patch(t, "/v1/admin/payment-settings/bakong-khqr", map[string]any{
+		"enabled":      true,
+		"display_name": "Bakong KHQR",
+		"account_name": "SLAI Co",
+		"account_id":   "012345678",
+		"instructions": "Scan and upload proof.",
+	}, adminCookies)
+	assertStatus(t, settings, http.StatusOK)
+
+	invalidQR := client.postMultipart(t, "/v1/admin/payment-settings/bakong-khqr/khqr-image", map[string]string{}, "qr.txt", "text/plain", []byte("not an image"), adminCookies)
+	assertStatus(t, invalidQR, http.StatusBadRequest)
+
+	qr := client.postMultipart(t, "/v1/admin/payment-settings/bakong-khqr/khqr-image", map[string]string{}, "qr.png", "image/png", tinyPNG(), adminCookies)
+	assertStatus(t, qr, http.StatusOK)
+	if got := stringField(t, qr.JSON, "settings.khqr_image_url"); got != "/v1/payment-settings/bakong-khqr/khqr-image" {
+		t.Fatalf("khqr_image_url = %q", got)
+	}
+	if strings.Contains(qr.Body, "khqr_image_path") || strings.Contains(qr.Body, "file_path") {
+		t.Fatalf("settings response leaked storage path: %s", qr.Body)
+	}
+
+	checkout := client.post(t, "/v1/checkout/package/"+packageID, map[string]any{}, userCookies)
+	assertStatus(t, checkout, http.StatusCreated)
+	paymentID := stringField(t, checkout.JSON, "payment.id")
+	if got := stringField(t, checkout.JSON, "payment.status"); got != "pending_proof" {
+		t.Fatalf("checkout status = %q", got)
+	}
+
+	otherProof := client.postMultipart(t, "/v1/payments/"+paymentID+"/proof", map[string]string{}, "proof.png", "image/png", tinyPNG(), otherCookies)
+	assertStatus(t, otherProof, http.StatusForbidden)
+
+	proof := client.postMultipart(t, "/v1/payments/"+paymentID+"/proof", map[string]string{
+		"transaction_ref": "user typed ref - not trusted",
+		"note":            "paid from mobile app",
+	}, "proof.png", "image/png", tinyPNG(), userCookies)
+	assertStatus(t, proof, http.StatusOK)
+	if got := stringField(t, proof.JSON, "payment.status"); got != "pending_review" {
+		t.Fatalf("proof status = %q", got)
+	}
+
+	userProof := client.get(t, "/v1/payments/"+paymentID+"/proof", userCookies)
+	assertStatus(t, userProof, http.StatusOK)
+	if !strings.Contains(userProof.Header.Get("Content-Type"), "image/png") {
+		t.Fatalf("proof content-type = %q", userProof.Header.Get("Content-Type"))
+	}
+
+	adminList := client.get(t, "/v1/admin/payments?status=pending_review", adminCookies)
+	assertStatus(t, adminList, http.StatusOK)
+	if got := numberField(t, adminList.JSON, "total"); got != 1 {
+		t.Fatalf("pending review total = %v", got)
+	}
+	adminItems := adminList.JSON["items"].([]any)
+	if got := adminItems[0].(map[string]any)["proof_uploaded"]; got != true {
+		t.Fatalf("proof_uploaded = %#v", got)
+	}
+
+	missingReference := client.post(t, "/v1/admin/payments/"+paymentID+"/approve", map[string]any{}, adminCookies)
+	assertStatus(t, missingReference, http.StatusBadRequest)
+
+	approved := client.post(t, "/v1/admin/payments/"+paymentID+"/approve", map[string]any{
+		"payment_reference": " bk 123 456 ",
+		"note":              "Verified in bank app",
+	}, adminCookies)
+	assertStatus(t, approved, http.StatusOK)
+	if got := stringField(t, approved.JSON, "payment.status"); got != "paid" {
+		t.Fatalf("approved status = %q", got)
+	}
+	if got := numberField(t, approved.JSON, "balance.availableUnits"); got != 1250000 {
+		t.Fatalf("balance.availableUnits = %v", got)
+	}
+
+	doubleApprove := client.post(t, "/v1/admin/payments/"+paymentID+"/approve", map[string]any{"payment_reference": "BK123456"}, adminCookies)
+	assertStatus(t, doubleApprove, http.StatusConflict)
+
+	secondCheckout := client.post(t, "/v1/checkout/package/"+packageID, map[string]any{}, userCookies)
+	assertStatus(t, secondCheckout, http.StatusCreated)
+	secondPaymentID := stringField(t, secondCheckout.JSON, "payment.id")
+	secondProof := client.postMultipart(t, "/v1/payments/"+secondPaymentID+"/proof", map[string]string{}, "proof2.png", "image/png", tinyPNG(), userCookies)
+	assertStatus(t, secondProof, http.StatusOK)
+	duplicateRef := client.post(t, "/v1/admin/payments/"+secondPaymentID+"/approve", map[string]any{"payment_reference": "BK123456"}, adminCookies)
+	assertStatus(t, duplicateRef, http.StatusConflict)
+	assertBalance(t, user.ID, 1250000)
+
+	rejected := client.post(t, "/v1/admin/payments/"+secondPaymentID+"/reject", map[string]any{"reason": "Amount does not match"}, adminCookies)
+	assertStatus(t, rejected, http.StatusOK)
+	if got := stringField(t, rejected.JSON, "payment.status"); got != "rejected" {
+		t.Fatalf("rejected status = %q", got)
+	}
+	assertBalance(t, user.ID, 1250000)
+
+	var auditCount int
+	if err := testDB.QueryRow(context.Background(), `SELECT count(*) FROM admin_audit_logs WHERE admin_id = $1 AND action IN ('payment_settings_updated', 'payment_settings_khqr_uploaded', 'payment_approved', 'payment_rejected')`, adminUser.ID).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount < 4 {
+		t.Fatalf("audit count = %d", auditCount)
+	}
+
+	for _, body := range []string{checkout.Body, proof.Body, adminList.Body, approved.Body} {
+		if strings.Contains(body, "payment-proofs/") || strings.Contains(body, "khqr_image_path") || strings.Contains(body, "file_path") {
+			t.Fatalf("response leaked storage path: %s", body)
+		}
+	}
+}
+
+func TestSLAIPaymentCheckoutAndSignedCallbackCreditsBalance(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	fakePayments := newFakeSLAIPaymentClient()
+	client := newTestClientWithSLAIPayment(t, fakePayments, "callback-secret")
+	adminUser := createUser(t, "admin@example.com", users.RoleAdmin)
+	user := createUser(t, "auto-pay-user@example.com", users.RoleUser)
+	adminCookies := loginCookies(t, client, adminUser.Email)
+	userCookies := loginCookies(t, client, user.Email)
+
+	providerStatus := client.get(t, "/v1/admin/payment-settings/bakong-khqr/provider-status", adminCookies)
+	assertStatus(t, providerStatus, http.StatusOK)
+	if got := boolField(t, providerStatus.JSON, "provider_status.enabled"); !got {
+		t.Fatalf("provider status enabled = false")
+	}
+	if got := boolField(t, providerStatus.JSON, "provider_status.callback_secret_configured"); !got {
+		t.Fatalf("provider callback secret configured = false")
+	}
+
+	pkgResp := client.post(t, "/v1/admin/packages", map[string]any{
+		"name":             "Auto Starter",
+		"description":      "Auto payment package",
+		"creditUnits":      1000000,
+		"bonusCreditUnits": 250000,
+		"priceMinor":       100,
+		"currency":         "USD",
+		"active":           true,
+	}, adminCookies)
+	assertStatus(t, pkgResp, http.StatusCreated)
+	packageID := stringField(t, pkgResp.JSON, "package.id")
+
+	checkout := client.post(t, "/v1/checkout/package/"+packageID, map[string]any{}, userCookies)
+	assertStatus(t, checkout, http.StatusCreated)
+	paymentID := stringField(t, checkout.JSON, "payment.id")
+	if got := stringField(t, checkout.JSON, "payment.status"); got != "pending_payment" {
+		t.Fatalf("checkout status = %q", got)
+	}
+	if got := stringField(t, checkout.JSON, "checkout.qr_image_data_uri"); !strings.HasPrefix(got, "data:image/png;base64,") {
+		t.Fatalf("checkout QR image missing: %q", got)
+	}
+	if len(fakePayments.created) != 1 || fakePayments.created[0].Amount != "1.00" {
+		t.Fatalf("unexpected provider create request: %#v", fakePayments.created)
+	}
+
+	external := fakePayments.payments[fakePayments.created[0].Reference]
+	paidAt := time.Now().UTC()
+	external.Status = "PAID"
+	external.PaidAt = &paidAt
+	external.Telegram = &slaipayment.TelegramPayment{
+		Amount:        "1.00",
+		Currency:      "USD",
+		PaidAt:        paidAt,
+		MerchantName:  external.MerchantName,
+		Reference:     external.Reference,
+		TransactionID: "177754980382419",
+		APV:           "340383",
+	}
+	callback := slaipayment.CallbackPayload{Event: "payment.paid", Payment: external}
+	callbackResp := client.postSignedSLAIPaymentCallback(t, callback, "callback-secret")
+	assertStatus(t, callbackResp, http.StatusOK)
+	if got := numberField(t, callbackResp.JSON, "balance.availableUnits"); got != 1250000 {
+		t.Fatalf("callback balance = %v", got)
+	}
+	assertBalance(t, user.ID, 1250000)
+
+	duplicate := client.postSignedSLAIPaymentCallback(t, callback, "callback-secret")
+	assertStatus(t, duplicate, http.StatusOK)
+	assertBalance(t, user.ID, 1250000)
+
+	invalid := client.postRaw(t, "/v1/payments/slai-payment/callback", []byte(`{"event":"payment.paid"}`), nil)
+	assertStatus(t, invalid, http.StatusUnauthorized)
+
+	payment := client.get(t, "/v1/payments/"+paymentID, userCookies)
+	assertStatus(t, payment, http.StatusOK)
+	if got := stringField(t, payment.JSON, "payment.providerTransactionId"); got != "177754980382419" {
+		t.Fatalf("provider transaction id = %q", got)
 	}
 }
 
@@ -976,12 +1207,109 @@ func newTestClient(t *testing.T) testClient {
 			BatchLimit: 100,
 			StartDelay: 10 * time.Second,
 		},
+		Storage: config.StorageConfig{
+			Dir:               t.TempDir(),
+			PaymentProofMaxMB: 5,
+			PaymentQRMaxMB:    2,
+		},
 	}, testDB, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	return testClient{
 		server: httptest.NewServer(server),
 		client: &http.Client{},
 	}
+}
+
+func newTestClientWithSLAIPayment(t *testing.T, paymentClient slaipayment.Client, callbackSecret string) testClient {
+	t.Helper()
+	server := httpserver.NewServer(httpserver.ServerConfig{
+		Addr:             ":0",
+		ReadinessTimeout: time.Second,
+		SessionSecret:    "test-secret",
+		CookieSecure:     false,
+		SessionTTL:       time.Hour,
+		APIKeyPepper:     "test-api-key-pepper",
+		APIKeyPrefix:     "sk_slai",
+		OmniRoute: config.OmniRouteConfig{
+			Enabled:       false,
+			UsageSyncMode: "call_logs",
+			CallLogLimit:  100,
+		},
+		UsageSyncWorker: config.UsageSyncWorkerConfig{
+			Enabled:    false,
+			Interval:   60 * time.Second,
+			LockKey:    "slai_usage_sync",
+			BatchLimit: 100,
+			StartDelay: 10 * time.Second,
+		},
+		Storage: config.StorageConfig{
+			Dir:               t.TempDir(),
+			PaymentProofMaxMB: 5,
+			PaymentQRMaxMB:    2,
+		},
+		SLAIPayment: config.SLAIPaymentConfig{
+			Enabled:         true,
+			BaseURL:         "http://slai-payment.test",
+			CallbackBaseURL: "http://slai-api.test",
+			CallbackSecret:  callbackSecret,
+			MerchantPrefix:  "SLAI",
+			DefaultExpiry:   30 * time.Minute,
+			HTTPTimeout:     time.Second,
+		},
+		SLAIPaymentClient: paymentClient,
+	}, testDB, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	return testClient{
+		server: httptest.NewServer(server),
+		client: &http.Client{},
+	}
+}
+
+type fakeSLAIPaymentClient struct {
+	created  []slaipayment.CreatePaymentInput
+	payments map[string]slaipayment.Payment
+}
+
+func newFakeSLAIPaymentClient() *fakeSLAIPaymentClient {
+	return &fakeSLAIPaymentClient{payments: map[string]slaipayment.Payment{}}
+}
+
+func (c *fakeSLAIPaymentClient) CreatePayment(_ context.Context, input slaipayment.CreatePaymentInput) (slaipayment.Payment, error) {
+	c.created = append(c.created, input)
+	now := time.Now().UTC()
+	payment := slaipayment.Payment{
+		ID:             "pay_" + input.Reference,
+		Reference:      input.Reference,
+		MerchantPrefix: input.MerchantPrefix,
+		MerchantName:   input.MerchantPrefix + " " + input.Reference,
+		Amount:         input.Amount,
+		Currency:       input.Currency,
+		Status:         "PENDING",
+		QRPayload:      "000201" + input.Reference,
+		QRMD5:          "qr-md5-" + input.Reference,
+		QRImageDataURI: "data:image/png;base64,AAAA",
+		CreatedAt:      now,
+		ExpiresAt:      now.Add(30 * time.Minute),
+	}
+	c.payments[input.Reference] = payment
+	return payment, nil
+}
+
+func (c *fakeSLAIPaymentClient) GetPayment(_ context.Context, id string) (slaipayment.Payment, error) {
+	for _, payment := range c.payments {
+		if payment.ID == id {
+			return payment, nil
+		}
+	}
+	return slaipayment.Payment{}, slaipayment.ErrNotFound
+}
+
+func (c *fakeSLAIPaymentClient) GetPaymentByReference(_ context.Context, reference string) (slaipayment.Payment, error) {
+	payment, ok := c.payments[reference]
+	if !ok {
+		return slaipayment.Payment{}, slaipayment.ErrNotFound
+	}
+	return payment, nil
 }
 
 func requireDB(t *testing.T) {
@@ -1017,6 +1345,74 @@ func (c testClient) postWithHeaders(t *testing.T, path string, payload any, cook
 		req.AddCookie(cookie)
 	}
 	return c.do(t, req)
+}
+
+func (c testClient) postSignedSLAIPaymentCallback(t *testing.T, payload slaipayment.CallbackPayload, secret string) testResponse {
+	t.Helper()
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(timestamp))
+	mac.Write([]byte("."))
+	mac.Write(body)
+	return c.postRaw(t, "/v1/payments/slai-payment/callback", body, map[string]string{
+		"Content-Type":             "application/json",
+		"X-SLAI-Payment-Timestamp": timestamp,
+		"X-SLAI-Payment-Signature": "v1=" + hex.EncodeToString(mac.Sum(nil)),
+		"X-SLAI-Payment-ID":        payload.Payment.ID,
+	})
+}
+
+func (c testClient) postRaw(t *testing.T, path string, body []byte, headers map[string]string) testResponse {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, c.server.URL+path, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+	return c.do(t, req)
+}
+
+func (c testClient) postMultipart(t *testing.T, path string, fields map[string]string, fileName string, contentType string, data []byte, cookies []*http.Cookie) testResponse {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	for key, value := range fields {
+		if err := writer.WriteField(key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, fileName))
+	header.Set("Content-Type", contentType)
+	part, err := writer.CreatePart(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, c.server.URL+path, &body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	for _, cookie := range cookies {
+		req.AddCookie(cookie)
+	}
+	return c.do(t, req)
+}
+
+func tinyPNG() []byte {
+	return []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0, 0, 0, 0, 'I', 'E', 'N', 'D', 0xae, 0x42, 0x60, 0x82}
 }
 
 func (c testClient) patch(t *testing.T, path string, payload any, cookies []*http.Cookie) testResponse {
@@ -1106,8 +1502,23 @@ func loginCookies(t *testing.T, client testClient, email string) []*http.Cookie 
 func truncateTables(t *testing.T) {
 	t.Helper()
 	_, err := testDB.Exec(context.Background(), `
-		TRUNCATE admin_audit_logs, credit_ledger_entries, payments, credit_balances, sessions, credit_packages, users
+		TRUNCATE admin_audit_logs, credit_ledger_entries, payment_proofs, payments, credit_balances, sessions, credit_packages, users
 		RESTART IDENTITY CASCADE
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = testDB.Exec(context.Background(), `
+		INSERT INTO payment_settings (provider, display_name, enabled)
+		VALUES ('bakong_khqr', 'Bakong KHQR', false)
+		ON CONFLICT (provider) DO UPDATE
+		SET enabled = false,
+		    display_name = 'Bakong KHQR',
+		    account_name = NULL,
+		    account_id = NULL,
+		    khqr_image_path = NULL,
+		    khqr_image_mime = NULL,
+		    instructions = NULL
 	`)
 	if err != nil {
 		t.Fatal(err)

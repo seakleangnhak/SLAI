@@ -130,7 +130,7 @@ function ProductRulesCard() {
         <RuleItem title="API keys" text="1 active key per user in this MVP." tone="blue" />
         <RuleItem title="Billing" text="Manual top-up only." tone="yellow" />
         <RuleItem title="Credits" text="Credits never expire." tone="green" />
-        <RuleItem title="Usage" text="Synced asynchronously from OmniRoute." tone="neutral" />
+        <RuleItem title="Usage" text="Synced asynchronously from provider usage logs." tone="neutral" />
       </div>
     </Card>
   );

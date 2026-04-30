@@ -24,6 +24,8 @@ type Config struct {
 	ShutdownTimeout   time.Duration
 	OmniRoute         OmniRouteConfig
 	UsageSyncWorker   UsageSyncWorkerConfig
+	Storage           StorageConfig
+	SLAIPayment       SLAIPaymentConfig
 }
 
 type OmniRouteConfig struct {
@@ -41,6 +43,23 @@ type UsageSyncWorkerConfig struct {
 	LockKey    string
 	BatchLimit int
 	StartDelay time.Duration
+}
+
+type StorageConfig struct {
+	Dir               string
+	PaymentProofMaxMB int
+	PaymentQRMaxMB    int
+}
+
+type SLAIPaymentConfig struct {
+	Enabled         bool
+	BaseURL         string
+	APIKey          string
+	CallbackBaseURL string
+	CallbackSecret  string
+	MerchantPrefix  string
+	DefaultExpiry   time.Duration
+	HTTPTimeout     time.Duration
 }
 
 func Load() (Config, error) {
@@ -93,6 +112,26 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	paymentProofMaxMB, err := intFromEnv("PAYMENT_PROOF_MAX_MB", 5)
+	if err != nil {
+		return Config{}, err
+	}
+	paymentQRMaxMB, err := intFromEnv("PAYMENT_QR_MAX_MB", 2)
+	if err != nil {
+		return Config{}, err
+	}
+	slaiPaymentEnabled, err := boolFromEnv("SLAI_PAYMENT_ENABLED", false)
+	if err != nil {
+		return Config{}, err
+	}
+	slaiPaymentDefaultExpiry, err := durationFromEnv("SLAI_PAYMENT_DEFAULT_EXPIRY", 30*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	slaiPaymentHTTPTimeout, err := durationFromEnv("SLAI_PAYMENT_HTTP_TIMEOUT", 10*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
 
 	cfg := Config{
 		AppEnv:            stringFromEnv("APP_ENV", "development"),
@@ -124,10 +163,51 @@ func Load() (Config, error) {
 			BatchLimit: usageSyncBatchLimit,
 			StartDelay: time.Duration(usageSyncStartDelaySeconds) * time.Second,
 		},
+		Storage: StorageConfig{
+			Dir:               stringFromEnv("STORAGE_DIR", "./storage"),
+			PaymentProofMaxMB: paymentProofMaxMB,
+			PaymentQRMaxMB:    paymentQRMaxMB,
+		},
+		SLAIPayment: SLAIPaymentConfig{
+			Enabled:         slaiPaymentEnabled,
+			BaseURL:         stringFromEnv("SLAI_PAYMENT_BASE_URL", "http://localhost:8090"),
+			APIKey:          stringFromEnv("SLAI_PAYMENT_API_KEY", ""),
+			CallbackBaseURL: stringFromEnv("SLAI_PAYMENT_CALLBACK_BASE_URL", "http://localhost:8080"),
+			CallbackSecret:  stringFromEnv("SLAI_PAYMENT_CALLBACK_SECRET", ""),
+			MerchantPrefix:  stringFromEnv("SLAI_PAYMENT_MERCHANT_PREFIX", "SLAI"),
+			DefaultExpiry:   slaiPaymentDefaultExpiry,
+			HTTPTimeout:     slaiPaymentHTTPTimeout,
+		},
 	}
 
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")
+	}
+	if cfg.Storage.Dir == "" {
+		return Config{}, fmt.Errorf("STORAGE_DIR is required")
+	}
+	if cfg.Storage.PaymentProofMaxMB <= 0 {
+		cfg.Storage.PaymentProofMaxMB = 5
+	}
+	if cfg.Storage.PaymentQRMaxMB <= 0 {
+		cfg.Storage.PaymentQRMaxMB = 2
+	}
+	if cfg.SLAIPayment.Enabled {
+		if cfg.SLAIPayment.BaseURL == "" {
+			return Config{}, fmt.Errorf("SLAI_PAYMENT_BASE_URL is required when SLAI_PAYMENT_ENABLED=true")
+		}
+		if cfg.SLAIPayment.CallbackBaseURL == "" {
+			return Config{}, fmt.Errorf("SLAI_PAYMENT_CALLBACK_BASE_URL is required when SLAI_PAYMENT_ENABLED=true")
+		}
+		if cfg.SLAIPayment.CallbackSecret == "" {
+			return Config{}, fmt.Errorf("SLAI_PAYMENT_CALLBACK_SECRET is required when SLAI_PAYMENT_ENABLED=true")
+		}
+	}
+	if cfg.SLAIPayment.DefaultExpiry <= 0 {
+		cfg.SLAIPayment.DefaultExpiry = 30 * time.Minute
+	}
+	if cfg.SLAIPayment.HTTPTimeout <= 0 {
+		cfg.SLAIPayment.HTTPTimeout = 10 * time.Second
 	}
 	if cfg.OmniRoute.Enabled {
 		if cfg.OmniRoute.BaseURL == "" {

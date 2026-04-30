@@ -20,8 +20,6 @@ const primaryButton =
 const secondaryButton =
   "inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400";
 const statuses = ["pending", "billed", "duplicate", "failed", "ignored"];
-const sensitiveKeyPattern = /(password|token|secret|key|authorization|pepper)/i;
-
 type FilterState = {
   model: string;
   provider: string;
@@ -84,21 +82,6 @@ function validateFilters(filters: FilterState) {
   return null;
 }
 
-function redactJSON(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map((item) => redactJSON(item));
-  }
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, nestedValue]) => [
-        key,
-        sensitiveKeyPattern.test(key) ? "[redacted]" : redactJSON(nestedValue)
-      ])
-    );
-  }
-  return value;
-}
-
 function SummaryCard({ label, value, hint, children }: { label: string; value: string; hint: string; children?: React.ReactNode }) {
   return (
     <Card className="min-h-36 rounded-2xl p-5 shadow-sm transition hover:shadow-md">
@@ -121,7 +104,7 @@ function InfoBanner() {
           <div>
             <CardTitle>Async billing</CardTitle>
             <CardDescription className="mt-1 text-blue-900/70">
-              Usage appears after OmniRoute call logs are synced. Duplicate events are ignored and billed events create ledger debits.
+              Usage appears after provider logs are synced. Duplicate events are ignored and billed events create ledger debits.
             </CardDescription>
           </div>
         </div>
@@ -192,7 +175,7 @@ function EmptyUsageState({ filtered, onClear }: { filtered: boolean; onClear: ()
       <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-slate-500">
         {filtered
           ? "Try clearing filters or expanding the date range."
-          : "Call OmniRoute with your SLAI-created API key. Usage will appear after sync."}
+          : "Send requests with your SLAI-created API key. Usage will appear after sync."}
       </p>
       <div className="mt-5 flex flex-wrap justify-center gap-3">
         {filtered ? (
@@ -215,7 +198,7 @@ function UsageTable({ usage, onSelect }: { usage: UsageEvent[]; onSelect: (event
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
             <tr>
-              {["Time", "Model", "Provider", "Tokens", "Cost", "Status", "Source", "Event ID", "Actions"].map((label) => (
+              {["Time", "Model", "Provider", "Tokens", "Cost", "Status", "Event ID", "Actions"].map((label) => (
                 <th key={label} className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</th>
               ))}
             </tr>
@@ -232,7 +215,6 @@ function UsageTable({ usage, onSelect }: { usage: UsageEvent[]; onSelect: (event
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-950">{formatCredits(event.cost_units)}</td>
                 <td className="whitespace-nowrap px-4 py-3"><Badge dot tone={statusTone(event.status)}>{event.status}</Badge></td>
-                <td className="whitespace-nowrap px-4 py-3 text-slate-700">{event.external_source}</td>
                 <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-slate-600">{truncateId(event.external_event_id, 10, 4)}</td>
                 <td className="whitespace-nowrap px-4 py-3">
                   <button className="text-sm font-semibold text-blue-700 hover:text-blue-800" type="button" onClick={() => onSelect(event)}>View details</button>
@@ -259,8 +241,6 @@ function UsageDetailsDrawer({ event, onClose }: { event: UsageEvent | null; onCl
   if (!event) {
     return null;
   }
-  const redactedRaw = event.raw_json ? JSON.stringify(redactJSON(event.raw_json), null, 2) : null;
-
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/30 backdrop-blur-sm" onMouseDown={onClose}>
       <aside className="h-full w-full max-w-xl overflow-y-auto border-l border-slate-200 bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
@@ -277,7 +257,6 @@ function UsageDetailsDrawer({ event, onClose }: { event: UsageEvent | null; onCl
           <div className="grid gap-3 sm:grid-cols-2">
             <DetailItem label="Event ID" value={event.id} mono />
             <DetailItem label="External ID" value={event.external_event_id} mono />
-            <DetailItem label="Source" value={event.external_source} />
             <DetailItem label="Status" value={<Badge dot tone={statusTone(event.status)}>{event.status}</Badge>} />
             <DetailItem label="Model" value={event.model ?? "-"} />
             <DetailItem label="Provider" value={event.provider ?? "-"} />
@@ -288,12 +267,6 @@ function UsageDetailsDrawer({ event, onClose }: { event: UsageEvent | null; onCl
             <DetailItem label="Occurred" value={formatDateTime(event.occurred_at)} />
             <DetailItem label="Created" value={formatDateTime(event.created_at)} />
           </div>
-          {redactedRaw ? (
-            <div>
-              <h3 className="text-sm font-semibold text-slate-950">Raw metadata</h3>
-              <pre className="mt-3 max-h-96 overflow-auto rounded-2xl border border-slate-200 bg-slate-950 p-4 text-xs leading-6 text-slate-100"><code>{redactedRaw}</code></pre>
-            </div>
-          ) : null}
         </div>
       </aside>
     </div>
@@ -363,8 +336,8 @@ export default function UsagePage() {
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">Usage</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-normal text-slate-950 sm:text-4xl">OmniRoute usage</h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-500">Usage is billed asynchronously from synced OmniRoute call logs.</p>
+            <h1 className="mt-2 text-3xl font-semibold tracking-normal text-slate-950 sm:text-4xl">API usage</h1>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-500">Usage is billed asynchronously from synced provider logs.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button className={secondaryButton} type="button" onClick={() => load(offset)} disabled={loading}>Refresh</button>

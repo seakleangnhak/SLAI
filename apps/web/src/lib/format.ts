@@ -57,6 +57,20 @@ export function formatDelta(value: number) {
   return value < 0 ? `-${formatted}` : `+${formatted}`;
 }
 
+export function formatLedgerReason(entry: { type?: string; reason?: string | null; source?: string | null }) {
+  const raw = entry.reason?.trim() || entry.source?.trim() || "";
+  if (!raw) {
+    return "-";
+  }
+  if (/omniroute/i.test(raw)) {
+    if (entry.type === "usage_debit" || /usage/i.test(raw)) {
+      return "API usage billing";
+    }
+    return raw.replace(/omniroute/gi, "SLAI");
+  }
+  return raw;
+}
+
 export function truncateId(value?: string | null, start = 8, end = 4) {
   if (!value) {
     return "-";

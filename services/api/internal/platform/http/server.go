@@ -2,10 +2,19 @@ package httpserver
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -21,21 +30,25 @@ import (
 	"github.com/slai/slai/services/api/internal/packages"
 	"github.com/slai/slai/services/api/internal/payments"
 	platformdb "github.com/slai/slai/services/api/internal/platform/db"
+	"github.com/slai/slai/services/api/internal/slaipayment"
 	"github.com/slai/slai/services/api/internal/usage"
 	"github.com/slai/slai/services/api/internal/users"
 )
 
 type ServerConfig struct {
-	Addr             string
-	ReadinessTimeout time.Duration
-	SessionSecret    string
-	CookieSecure     bool
-	SessionTTL       time.Duration
-	APIKeyPepper     string
-	APIKeyPrefix     string
-	OmniRoute        config.OmniRouteConfig
-	OmniRouteClient  omniroute.Client
-	UsageSyncWorker  config.UsageSyncWorkerConfig
+	Addr              string
+	ReadinessTimeout  time.Duration
+	SessionSecret     string
+	CookieSecure      bool
+	SessionTTL        time.Duration
+	APIKeyPepper      string
+	APIKeyPrefix      string
+	OmniRoute         config.OmniRouteConfig
+	OmniRouteClient   omniroute.Client
+	UsageSyncWorker   config.UsageSyncWorkerConfig
+	Storage           config.StorageConfig
+	SLAIPayment       config.SLAIPaymentConfig
+	SLAIPaymentClient slaipayment.Client
 }
 
 type Server struct {
@@ -55,6 +68,10 @@ type Server struct {
 	usageSyncExecutor *usage.SyncExecutor
 	usageSyncStatus   *usage.SyncStatusTracker
 	usageSyncWorker   *usage.SyncWorker
+	slaiPaymentCfg    config.SLAIPaymentConfig
+	storageDir        string
+	paymentProofMax   int64
+	paymentQRMax      int64
 }
 
 func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Server {
@@ -78,6 +95,12 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 		logger,
 	)
 	usageSyncWorker := usage.NewSyncWorker(cfg.UsageSyncWorker, cfg.OmniRoute.Enabled, usageSyncExecutor, usageSyncStatus, logger)
+	paymentService := payments.NewService(pool, payments.ProviderConfig{
+		SLAIPaymentEnabled:         cfg.SLAIPayment.Enabled,
+		SLAIPaymentCallbackBaseURL: cfg.SLAIPayment.CallbackBaseURL,
+		SLAIPaymentMerchantPrefix:  cfg.SLAIPayment.MerchantPrefix,
+		SLAIPaymentDefaultExpiry:   cfg.SLAIPayment.DefaultExpiry,
+	}).WithSLAIPaymentClient(cfg.SLAIPaymentClient)
 
 	server := &Server{
 		db:                pool,
@@ -86,7 +109,7 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 		sessionTTL:        cfg.SessionTTL,
 		sessions:          sessions,
 		authService:       auth.NewService(pool, sessions),
-		paymentService:    payments.NewService(pool),
+		paymentService:    paymentService,
 		adminService:      admin.NewService(pool),
 		apiKeyService:     apiKeyService,
 		usageService:      usageService,
@@ -95,6 +118,10 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 		usageSyncExecutor: usageSyncExecutor,
 		usageSyncStatus:   usageSyncStatus,
 		usageSyncWorker:   usageSyncWorker,
+		slaiPaymentCfg:    cfg.SLAIPayment,
+		storageDir:        cfg.Storage.Dir,
+		paymentProofMax:   int64(cfg.Storage.PaymentProofMaxMB) * 1024 * 1024,
+		paymentQRMax:      int64(cfg.Storage.PaymentQRMaxMB) * 1024 * 1024,
 	}
 
 	mux := http.NewServeMux()
@@ -109,6 +136,14 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 	mux.HandleFunc("GET /v1/balance", server.balance)
 	mux.HandleFunc("GET /v1/ledger", server.ledgerEntries)
 	mux.HandleFunc("GET /v1/payments", server.payments)
+	mux.HandleFunc("GET /v1/payments/{id}", server.getPayment)
+	mux.HandleFunc("POST /v1/payments/{id}/refresh", server.refreshPayment)
+	mux.HandleFunc("POST /v1/payments/slai-payment/callback", server.slaiPaymentCallback)
+	mux.HandleFunc("POST /v1/payments/{id}/proof", server.uploadPaymentProof)
+	mux.HandleFunc("GET /v1/payments/{id}/proof", server.getPaymentProof)
+	mux.HandleFunc("POST /v1/checkout/package/{package_id}", server.checkoutPackage)
+	mux.HandleFunc("GET /v1/payment-settings/bakong-khqr", server.bakongPaymentSettings)
+	mux.HandleFunc("GET /v1/payment-settings/bakong-khqr/khqr-image", server.bakongKHQRImage)
 	mux.HandleFunc("GET /v1/usage", server.listUsage)
 	mux.HandleFunc("GET /v1/api-key", server.getAPIKey)
 	mux.HandleFunc("POST /v1/api-key", server.createAPIKey)
@@ -118,6 +153,15 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 	mux.HandleFunc("GET /v1/admin/packages", server.adminListPackages)
 	mux.HandleFunc("POST /v1/admin/packages", server.adminCreatePackage)
 	mux.HandleFunc("PATCH /v1/admin/packages/{id}", server.adminUpdatePackage)
+	mux.HandleFunc("GET /v1/admin/payment-settings/bakong-khqr", server.adminGetBakongPaymentSettings)
+	mux.HandleFunc("GET /v1/admin/payment-settings/bakong-khqr/provider-status", server.adminGetBakongPaymentProviderStatus)
+	mux.HandleFunc("PATCH /v1/admin/payment-settings/bakong-khqr", server.adminUpdateBakongPaymentSettings)
+	mux.HandleFunc("POST /v1/admin/payment-settings/bakong-khqr/khqr-image", server.adminUploadBakongKHQRImage)
+	mux.HandleFunc("GET /v1/admin/payments", server.adminListPayments)
+	mux.HandleFunc("GET /v1/admin/payments/{id}", server.adminGetPayment)
+	mux.HandleFunc("GET /v1/admin/payments/{id}/proof", server.adminGetPaymentProof)
+	mux.HandleFunc("POST /v1/admin/payments/{id}/approve", server.adminApprovePayment)
+	mux.HandleFunc("POST /v1/admin/payments/{id}/reject", server.adminRejectPayment)
 	mux.HandleFunc("POST /v1/admin/payments/manual-topup", server.adminManualTopUp)
 	mux.HandleFunc("POST /v1/admin/ledger/adjustments", server.adminLedgerAdjustment)
 	mux.HandleFunc("POST /v1/internal/usage/mock-event", server.ingestMockUsageEvent)
@@ -297,6 +341,286 @@ func (s *Server) payments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"payments": items})
+}
+
+func (s *Server) getPayment(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	payment, err := s.paymentService.GetForUser(r.Context(), user.ID, r.PathValue("id"))
+	if err != nil {
+		writePaymentError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"payment": payment})
+}
+
+func (s *Server) refreshPayment(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	payment, err := s.paymentService.RefreshForUser(r.Context(), user.ID, r.PathValue("id"))
+	if err != nil {
+		writePaymentError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"payment": payment})
+}
+
+func (s *Server) slaiPaymentCallback(w http.ResponseWriter, r *http.Request) {
+	body, err := s.readAndVerifySLAIPaymentCallback(w, r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid_payment_callback_signature", err)
+		return
+	}
+	var payload slaipayment.CallbackPayload
+	if err := json.Unmarshal(body, &payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_payment_callback", err)
+		return
+	}
+	if payload.Event != "payment.paid" || payload.Payment.ID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_payment_callback", payments.ErrPaymentCallbackInvalid)
+		return
+	}
+	if headerID := strings.TrimSpace(r.Header.Get("X-SLAI-Payment-ID")); headerID == "" || headerID != payload.Payment.ID {
+		writeError(w, http.StatusUnauthorized, "invalid_payment_callback_signature", payments.ErrPaymentCallbackInvalid)
+		return
+	}
+	result, err := s.paymentService.ApplySLAIPayment(r.Context(), payload.Payment, true)
+	if err != nil {
+		writePaymentError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) checkoutPackage(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	result, err := s.paymentService.CheckoutPackage(r.Context(), user.ID, r.PathValue("package_id"))
+	if err != nil {
+		writePaymentError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, result)
+}
+
+func (s *Server) uploadPaymentProof(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	file, err := s.storeUploadedFile(w, r, "payment-proofs", s.paymentProofMax, map[string]bool{
+		"image/png":       true,
+		"image/jpeg":      true,
+		"image/webp":      true,
+		"application/pdf": true,
+	})
+	if err != nil {
+		writePaymentError(w, err)
+		return
+	}
+	transactionRef := optionalString(r.FormValue("transaction_ref"))
+	note := optionalString(r.FormValue("note"))
+	payment, err := s.paymentService.UploadProof(r.Context(), user.ID, r.PathValue("id"), payments.ProofUploadInput{
+		TransactionRef: transactionRef,
+		Note:           note,
+		File:           file,
+	})
+	if err != nil {
+		writePaymentError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"payment": payment})
+}
+
+func (s *Server) getPaymentProof(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	proof, err := s.paymentService.LatestProofForUser(r.Context(), user.ID, r.PathValue("id"))
+	if err != nil {
+		writePaymentError(w, err)
+		return
+	}
+	s.serveStoredFile(w, proof.FilePath, proof.FileMIME, proof.FileName)
+}
+
+func (s *Server) bakongPaymentSettings(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireUser(w, r); !ok {
+		return
+	}
+	settings, err := s.paymentService.GetSettings(r.Context(), payments.ProviderBakongKHQR)
+	if err != nil {
+		writePaymentError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"settings": settings})
+}
+
+func (s *Server) bakongKHQRImage(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireUser(w, r); !ok {
+		return
+	}
+	settings, err := s.paymentService.GetSettings(r.Context(), payments.ProviderBakongKHQR)
+	if err != nil {
+		writePaymentError(w, err)
+		return
+	}
+	if settings.KHQRImagePath == nil || settings.KHQRImageMIME == nil {
+		writeError(w, http.StatusNotFound, "khqr_image_not_configured", payments.ErrPaymentSettingsIncomplete)
+		return
+	}
+	s.serveStoredFile(w, *settings.KHQRImagePath, *settings.KHQRImageMIME, "bakong-khqr")
+}
+
+func (s *Server) adminGetBakongPaymentSettings(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	settings, err := s.paymentService.GetSettings(r.Context(), payments.ProviderBakongKHQR)
+	if err != nil {
+		writePaymentError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"settings": settings})
+}
+
+func (s *Server) adminGetBakongPaymentProviderStatus(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	status := payments.PaymentProviderStatus{
+		Provider:                  payments.ProviderBakongKHQR,
+		Mode:                      "automatic_slai_payment",
+		Enabled:                   s.slaiPaymentCfg.Enabled,
+		BaseURLConfigured:         strings.TrimSpace(s.slaiPaymentCfg.BaseURL) != "",
+		APIKeyConfigured:          strings.TrimSpace(s.slaiPaymentCfg.APIKey) != "",
+		CallbackBaseURLConfigured: strings.TrimSpace(s.slaiPaymentCfg.CallbackBaseURL) != "",
+		CallbackSecretConfigured:  strings.TrimSpace(s.slaiPaymentCfg.CallbackSecret) != "",
+		MerchantPrefix:            s.slaiPaymentCfg.MerchantPrefix,
+		DefaultExpirySeconds:      int64(s.slaiPaymentCfg.DefaultExpiry.Seconds()),
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"provider_status": status})
+}
+
+func (s *Server) adminUpdateBakongPaymentSettings(w http.ResponseWriter, r *http.Request) {
+	adminUser, ok := s.requireAdmin(w, r)
+	if !ok {
+		return
+	}
+	var req payments.PaymentSettingsInput
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	settings, err := s.paymentService.UpdateSettings(r.Context(), adminUser.ID, payments.ProviderBakongKHQR, req)
+	if err != nil {
+		writePaymentError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"settings": settings})
+}
+
+func (s *Server) adminUploadBakongKHQRImage(w http.ResponseWriter, r *http.Request) {
+	adminUser, ok := s.requireAdmin(w, r)
+	if !ok {
+		return
+	}
+	file, err := s.storeUploadedFile(w, r, "payment-settings", s.paymentQRMax, map[string]bool{
+		"image/png":  true,
+		"image/jpeg": true,
+		"image/webp": true,
+	})
+	if err != nil {
+		writePaymentError(w, err)
+		return
+	}
+	settings, err := s.paymentService.UpdateKHQRImage(r.Context(), adminUser.ID, payments.ProviderBakongKHQR, file)
+	if err != nil {
+		writePaymentError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"settings": settings})
+}
+
+func (s *Server) adminListPayments(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	filter, err := paymentFilterFromRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_payment_filter", err)
+		return
+	}
+	result, err := s.paymentService.ListAdmin(r.Context(), filter)
+	if err != nil {
+		writePaymentError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) adminGetPayment(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	detail, err := s.paymentService.GetAdmin(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writePaymentError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"payment": detail})
+}
+
+func (s *Server) adminGetPaymentProof(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	proof, err := s.paymentService.LatestProofForAdmin(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writePaymentError(w, err)
+		return
+	}
+	s.serveStoredFile(w, proof.FilePath, proof.FileMIME, proof.FileName)
+}
+
+func (s *Server) adminApprovePayment(w http.ResponseWriter, r *http.Request) {
+	adminUser, ok := s.requireAdmin(w, r)
+	if !ok {
+		return
+	}
+	var req payments.ApproveInput
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	result, err := s.paymentService.Approve(r.Context(), adminUser.ID, r.PathValue("id"), req)
+	if err != nil {
+		writePaymentError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) adminRejectPayment(w http.ResponseWriter, r *http.Request) {
+	adminUser, ok := s.requireAdmin(w, r)
+	if !ok {
+		return
+	}
+	var req payments.RejectInput
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	payment, err := s.paymentService.Reject(r.Context(), adminUser.ID, r.PathValue("id"), req)
+	if err != nil {
+		writePaymentError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"payment": payment})
 }
 
 func (s *Server) listUsage(w http.ResponseWriter, r *http.Request) {
@@ -973,6 +1297,191 @@ func auditLogFilterFromRequest(r *http.Request) (admin.AuditLogFilter, error) {
 		filter.To = &parsed
 	}
 	return filter, nil
+}
+
+func paymentFilterFromRequest(r *http.Request) (payments.AdminPaymentFilter, error) {
+	query := r.URL.Query()
+	filter := payments.AdminPaymentFilter{
+		Status:   query.Get("status"),
+		UserID:   query.Get("user_id"),
+		Provider: query.Get("provider"),
+		Limit:    queryLimit(r, 50),
+		Offset:   queryOffset(r),
+	}
+	if from := strings.TrimSpace(query.Get("from")); from != "" {
+		parsed, err := time.Parse(time.RFC3339, from)
+		if err != nil {
+			return payments.AdminPaymentFilter{}, err
+		}
+		filter.From = &parsed
+	}
+	if to := strings.TrimSpace(query.Get("to")); to != "" {
+		parsed, err := time.Parse(time.RFC3339, to)
+		if err != nil {
+			return payments.AdminPaymentFilter{}, err
+		}
+		filter.To = &parsed
+	}
+	return filter, nil
+}
+
+func (s *Server) readAndVerifySLAIPaymentCallback(w http.ResponseWriter, r *http.Request) ([]byte, error) {
+	secret := strings.TrimSpace(s.slaiPaymentCfg.CallbackSecret)
+	if secret == "" {
+		return nil, errors.New("payment callback secret is not configured")
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, err
+	}
+	timestamp := strings.TrimSpace(r.Header.Get("X-SLAI-Payment-Timestamp"))
+	signature := strings.TrimSpace(r.Header.Get("X-SLAI-Payment-Signature"))
+	if timestamp == "" || signature == "" {
+		return nil, errors.New("missing payment callback signature headers")
+	}
+	parsed, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	if delta := time.Since(time.Unix(parsed, 0)); delta > 5*time.Minute || delta < -5*time.Minute {
+		return nil, errors.New("payment callback timestamp outside tolerance")
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(timestamp))
+	mac.Write([]byte("."))
+	mac.Write(body)
+	expected := "v1=" + hex.EncodeToString(mac.Sum(nil))
+	if subtle.ConstantTimeCompare([]byte(expected), []byte(signature)) != 1 {
+		return nil, errors.New("payment callback signature mismatch")
+	}
+	return body, nil
+}
+
+func (s *Server) storeUploadedFile(w http.ResponseWriter, r *http.Request, subdir string, maxBytes int64, allowed map[string]bool) (payments.StoredFile, error) {
+	if maxBytes <= 0 {
+		maxBytes = 5 * 1024 * 1024
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes+1024)
+	if err := r.ParseMultipartForm(maxBytes + 1024); err != nil {
+		return payments.StoredFile{}, payments.ErrInvalidPaymentProof
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		return payments.StoredFile{}, payments.ErrInvalidPaymentProof
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil {
+		return payments.StoredFile{}, err
+	}
+	if int64(len(data)) > maxBytes {
+		return payments.StoredFile{}, payments.ErrInvalidPaymentProof
+	}
+	mimeType := strings.ToLower(strings.TrimSpace(strings.Split(http.DetectContentType(data), ";")[0]))
+	if !allowed[mimeType] {
+		return payments.StoredFile{}, payments.ErrInvalidPaymentProof
+	}
+
+	digest := sha256.Sum256(data)
+	sha := hex.EncodeToString(digest[:])
+	name := filepath.Base(header.Filename)
+	if name == "." || name == string(filepath.Separator) || name == "" {
+		name = "upload"
+	}
+	ext := strings.ToLower(filepath.Ext(name))
+	storedName := randomHex(16) + ext
+	dir := filepath.Join(s.storageDir, subdir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return payments.StoredFile{}, err
+	}
+	path := filepath.Join(dir, storedName)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return payments.StoredFile{}, err
+	}
+	return payments.StoredFile{Path: path, Name: name, MIME: mimeType, Size: int64(len(data)), SHA256: sha}, nil
+}
+
+func (s *Server) serveStoredFile(w http.ResponseWriter, path string, mimeType string, displayName string) {
+	cleanStorage, err := filepath.Abs(s.storageDir)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "storage_failed", err)
+		return
+	}
+	cleanPath, err := filepath.Abs(path)
+	if err != nil || !strings.HasPrefix(cleanPath, cleanStorage+string(filepath.Separator)) {
+		writeError(w, http.StatusNotFound, "file_not_found", nil)
+		return
+	}
+	file, err := os.Open(cleanPath)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "file_not_found", nil)
+		return
+	}
+	defer file.Close()
+	stat, err := file.Stat()
+	if err != nil {
+		writeError(w, http.StatusNotFound, "file_not_found", nil)
+		return
+	}
+	w.Header().Set("Content-Type", mimeType)
+	if displayName != "" {
+		w.Header().Set("Content-Disposition", `inline; filename="`+strings.ReplaceAll(displayName, `"`, "")+`"`)
+	}
+	http.ServeContent(w, rWithBackground(), displayName, stat.ModTime(), file)
+}
+
+func rWithBackground() *http.Request {
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
+	return req
+}
+
+func randomHex(bytesLen int) string {
+	buf := make([]byte, bytesLen)
+	if _, err := rand.Read(buf); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(buf)
+}
+
+func writePaymentError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, payments.ErrPaymentSettingsDisabled):
+		writeError(w, http.StatusBadRequest, "payment_settings_disabled", err)
+	case errors.Is(err, payments.ErrPaymentSettingsIncomplete):
+		writeError(w, http.StatusBadRequest, "payment_settings_incomplete", err)
+	case errors.Is(err, payments.ErrInvalidPaymentSettings):
+		writeError(w, http.StatusBadRequest, "invalid_payment_settings", err)
+	case errors.Is(err, payments.ErrPaymentProviderDisabled):
+		writeError(w, http.StatusBadRequest, "payment_provider_disabled", err)
+	case errors.Is(err, payments.ErrPaymentProviderMismatch):
+		writeError(w, http.StatusConflict, "payment_provider_mismatch", err)
+	case errors.Is(err, payments.ErrPaymentCallbackInvalid):
+		writeError(w, http.StatusBadRequest, "invalid_payment_callback", err)
+	case errors.Is(err, payments.ErrPaymentNotFound):
+		writeError(w, http.StatusNotFound, "payment_not_found", err)
+	case errors.Is(err, payments.ErrPaymentForbidden):
+		writeError(w, http.StatusForbidden, "payment_forbidden", err)
+	case errors.Is(err, payments.ErrInvalidPaymentProof):
+		writeError(w, http.StatusBadRequest, "invalid_payment_proof", err)
+	case errors.Is(err, payments.ErrPaymentReferenceRequired):
+		writeError(w, http.StatusBadRequest, "payment_reference_required", err)
+	case errors.Is(err, payments.ErrDuplicatePaymentReference):
+		writeError(w, http.StatusConflict, "duplicate_payment_reference", err)
+	case errors.Is(err, payments.ErrPaymentAlreadyPaid):
+		writeError(w, http.StatusConflict, "payment_already_paid", err)
+	case errors.Is(err, payments.ErrInvalidPaymentState):
+		writeError(w, http.StatusBadRequest, "invalid_payment_state", err)
+	case errors.Is(err, packages.ErrInvalidPackage):
+		writeError(w, http.StatusBadRequest, "invalid_package", err)
+	case errors.Is(err, slaipayment.ErrNotFound):
+		writeError(w, http.StatusNotFound, "payment_provider_not_found", err)
+	case errors.Is(err, slaipayment.ErrBadStatus), errors.Is(err, slaipayment.ErrInvalidPayload):
+		writeError(w, http.StatusBadGateway, "payment_provider_failed", err)
+	default:
+		writeError(w, http.StatusInternalServerError, "payment_failed", err)
+	}
 }
 
 func writeUsageError(w http.ResponseWriter, err error) {

@@ -1,25 +1,29 @@
+"use client";
+
 import Link from "next/link";
+import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
+import { api, ApiError, type User } from "@/lib/api";
 
 const primaryLink =
   "inline-flex min-h-11 items-center justify-center rounded-xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800";
 const secondaryLink =
   "inline-flex min-h-11 items-center justify-center rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50";
 
-const trustBullets = ["Credits never expire", "Ledger-backed balance", "Usage synced from OmniRoute", "One API key for MVP"];
+const trustBullets = ["Credits never expire", "Ledger-backed balance", "Usage synced automatically", "One API key for MVP"];
 
 const steps = [
   {
     title: "Top up credits",
-    text: "Administrators add prepaid credits after payment confirmation in this MVP."
+    text: "Choose a prepaid package and pay with Bakong KHQR. Credits are added after confirmation."
   },
   {
     title: "Create API key",
-    text: "Create one active SLAI key for server-side calls through OmniRoute."
+    text: "Create one active SLAI key for server-side AI requests."
   },
   {
-    title: "Call OmniRoute",
+    title: "Send AI requests",
     text: "Send model requests with your SLAI-created key from trusted backend code."
   },
   {
@@ -31,10 +35,10 @@ const steps = [
 const features = [
   ["Prepaid credits", "Give developers a simple balance they can use without monthly surprises."],
   ["API key management", "Create, rotate, and revoke the one active key supported in the MVP."],
-  ["Usage tracking", "Inspect OmniRoute usage events, token counts, providers, models, and status."],
+  ["Usage tracking", "Inspect usage events, token counts, providers, models, and status."],
   ["Credit ledger", "Keep top-ups, debits, adjustments, and balances in an auditable ledger."],
-  ["Admin top-ups", "Let operators apply package-based or manual credit top-ups after payment confirmation."],
-  ["OmniRoute integration", "Connect model calls to SLAI billing through synced call logs." ]
+  ["Payment checkout", "Let developers choose prepaid packages and pay through Bakong KHQR confirmation."],
+  ["Provider gateway", "Connect model calls to SLAI billing through synced provider usage logs." ]
 ];
 
 function CodeBlock() {
@@ -45,7 +49,7 @@ function CodeBlock() {
         <span className="rounded-md bg-blue-500/10 px-2 py-1 text-xs font-semibold text-blue-300">Server-side</span>
       </div>
       <pre className="overflow-x-auto p-5 text-sm leading-7 text-slate-100">
-        <code>{`curl https://YOUR_OMNIROUTE_DOMAIN/v1/chat/completions \\
+        <code>{`curl https://YOUR_SLAI_GATEWAY_DOMAIN/v1/chat/completions \\
   -H "Authorization: Bearer YOUR_SLAI_API_KEY" \\
   -H "Content-Type: application/json"`}</code>
       </pre>
@@ -111,8 +115,22 @@ function FeatureCard({ title, text, index }: { title: string; text: string; inde
 }
 
 export default function Home() {
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const loggedIn = currentUser !== null;
+
+  useEffect(() => {
+    api.auth
+      .me()
+      .then((response) => setCurrentUser(response.user))
+      .catch((err) => {
+        if (!(err instanceof ApiError) || err.status !== 401) {
+          setCurrentUser(null);
+        }
+      });
+  }, []);
+
   return (
-    <AppShell section="public">
+    <AppShell section="public" user={currentUser}>
       <div className="relative overflow-hidden rounded-[2rem] border border-slate-200 bg-white px-5 py-12 shadow-sm sm:px-8 lg:px-10 lg:py-16">
         <div className="absolute inset-0 bg-[linear-gradient(to_right,#e2e8f0_1px,transparent_1px),linear-gradient(to_bottom,#e2e8f0_1px,transparent_1px)] bg-[size:44px_44px] opacity-35" />
         <div className="absolute left-1/2 top-0 size-96 -translate-x-1/2 rounded-full bg-blue-200/50 blur-3xl" />
@@ -121,10 +139,10 @@ export default function Home() {
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-700">Prepaid AI API credits</p>
             <h1 className="mt-5 max-w-4xl text-5xl font-semibold tracking-normal text-slate-950 sm:text-6xl lg:text-7xl">Prepaid AI API credits for developers</h1>
             <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-600">
-              Top up credits, create one API key, call OmniRoute, and track usage as your balance is deducted.
+              Top up credits, create one API key, send AI requests, and track usage as your balance is deducted.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <Link href="/signup" className={primaryLink}>Create account</Link>
+              <Link href={loggedIn ? "/dashboard" : "/signup"} className={primaryLink}>{loggedIn ? "Dashboard" : "Create account"}</Link>
               <Link href="/packages" className={secondaryLink}>View packages</Link>
             </div>
             <div className="mt-8 grid gap-3 sm:grid-cols-2">
@@ -166,7 +184,7 @@ export default function Home() {
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-700">Quickstart</p>
           <h2 className="mt-3 text-3xl font-semibold tracking-normal text-slate-950">Use your SLAI-created key from a trusted server</h2>
           <p className="mt-3 text-sm leading-6 text-slate-500">
-            Create an account, get topped up by an administrator, then send OmniRoute requests with the key shown once after creation or rotation.
+            Create an account, add credits from billing, then send AI requests with the key shown once after creation or rotation.
           </p>
         </div>
         <CodeBlock />
@@ -175,8 +193,8 @@ export default function Home() {
       <section className="mt-6 rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 to-white p-5 shadow-sm">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <h2 className="text-base font-semibold text-slate-950">Self-serve checkout is coming later</h2>
-            <p className="mt-1 text-sm leading-6 text-amber-800/80">In this MVP, administrators add credits after payment confirmation. Public packages are informational, not a checkout flow.</p>
+            <h2 className="text-base font-semibold text-slate-950">Bakong KHQR checkout</h2>
+            <p className="mt-1 text-sm leading-6 text-amber-800/80">Choose a package, scan KHQR, and SLAI credits your balance after payment confirmation. Stripe checkout is not enabled in this MVP.</p>
           </div>
           <Link href="/packages" className={secondaryLink}>View packages</Link>
         </div>
@@ -186,11 +204,11 @@ export default function Home() {
         <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h2 className="text-3xl font-semibold tracking-normal">Start with prepaid AI credits</h2>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">Create an account, get topped up by an admin, and monitor usage from your developer dashboard.</p>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">{loggedIn ? "Open your dashboard to monitor credits, key status, usage, and billing activity." : "Create an account, add prepaid credits, and monitor usage from your developer dashboard."}</p>
           </div>
           <div className="flex flex-wrap gap-3">
-            <Link href="/signup" className="inline-flex min-h-11 items-center justify-center rounded-xl bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-blue-50">Create account</Link>
-            <Link href="/login" className="inline-flex min-h-11 items-center justify-center rounded-xl border border-white/15 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10">Sign in</Link>
+            <Link href={loggedIn ? "/dashboard" : "/signup"} className="inline-flex min-h-11 items-center justify-center rounded-xl bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-blue-50">{loggedIn ? "Open dashboard" : "Create account"}</Link>
+            <Link href={loggedIn ? "/dashboard/billing" : "/login"} className="inline-flex min-h-11 items-center justify-center rounded-xl border border-white/15 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10">{loggedIn ? "Open billing" : "Sign in"}</Link>
           </div>
         </div>
       </section>

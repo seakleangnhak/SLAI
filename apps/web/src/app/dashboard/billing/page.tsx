@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/Badge";
@@ -11,7 +12,7 @@ import { ErrorState } from "@/components/ErrorState";
 import { LoadingState } from "@/components/LoadingState";
 import { api, readableError, type Balance, type CreditPackage, type LedgerEntry, type Payment } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { formatCompactCredits, formatCredits, formatDateTime, formatDelta, formatMoney, formatUnits, truncateId } from "@/lib/format";
+import { formatCompactCredits, formatCredits, formatDateTime, formatDelta, formatLedgerReason, formatMoney, formatUnits, truncateId } from "@/lib/format";
 
 type BillingData = {
   balance: Balance;
@@ -20,8 +21,6 @@ type BillingData = {
   payments: Payment[];
 };
 
-const primaryButton =
-  "inline-flex min-h-10 items-center justify-center rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300";
 const secondaryButton =
   "inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400";
 
@@ -29,13 +28,13 @@ function paymentStatusTone(status?: string) {
   if (status === "paid") {
     return "green" as const;
   }
-  if (status === "pending") {
+  if (status === "pending" || status === "pending_payment" || status === "pending_proof" || status === "pending_review") {
     return "blue" as const;
   }
-  if (status === "failed" || status === "cancelled") {
+  if (status === "failed" || status === "cancelled" || status === "rejected" || status === "needs_review") {
     return "red" as const;
   }
-  if (status === "refunded") {
+  if (status === "refunded" || status === "expired") {
     return "yellow" as const;
   }
   return "neutral" as const;
@@ -92,21 +91,21 @@ function EmptyPanel({ title, message, action }: { title: string; message: string
   );
 }
 
-function ManualTopUpBanner() {
+function PaymentCheckoutBanner() {
   return (
     <Card className="rounded-2xl border-amber-200 bg-gradient-to-r from-amber-50 to-white p-4 shadow-sm">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex gap-3">
           <span className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-full bg-amber-100 text-sm font-bold text-amber-700">M</span>
           <div>
-            <CardTitle>Manual top-up only</CardTitle>
+            <CardTitle>Bakong KHQR checkout</CardTitle>
             <CardDescription className="mt-1 text-amber-800/80">
-              For this MVP, administrators add credits after payment confirmation. Self-serve checkout will be added later.
+              Choose a package, pay with KHQR, and SLAI credits your balance after payment confirmation.
             </CardDescription>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded-md bg-white px-2 py-1 text-xs font-semibold text-slate-500 ring-1 ring-slate-200">No checkout yet</span>
+          <span className="rounded-md bg-white px-2 py-1 text-xs font-semibold text-slate-500 ring-1 ring-slate-200">Auto confirmation</span>
           <a className={secondaryButton} href="#packages">View packages</a>
         </div>
       </div>
@@ -114,7 +113,7 @@ function ManualTopUpBanner() {
   );
 }
 
-function PackageCard({ pkg, requested, onRequest }: { pkg: CreditPackage; requested: boolean; onRequest: () => void }) {
+function PackageCard({ pkg, choosing, onChoose }: { pkg: CreditPackage; choosing: boolean; onChoose: () => void }) {
   const totalCredits = pkg.creditUnits + pkg.bonusCreditUnits;
   return (
     <Card className="rounded-2xl p-5 shadow-sm transition hover:border-blue-200 hover:shadow-md">
@@ -128,7 +127,7 @@ function PackageCard({ pkg, requested, onRequest }: { pkg: CreditPackage; reques
             {pkg.bonusCreditUnits > 0 ? <Badge tone="blue">Bonus</Badge> : null}
           </div>
           <p className="mt-5 text-3xl font-semibold text-slate-950">{formatMoney(pkg.priceMinor, pkg.currency)}</p>
-          <p className="mt-1 text-sm text-slate-500">Admin-confirmed top-up</p>
+          <p className="mt-1 text-sm text-slate-500">Bakong KHQR checkout</p>
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -145,9 +144,9 @@ function PackageCard({ pkg, requested, onRequest }: { pkg: CreditPackage; reques
         </div>
 
         <div className="mt-auto">
-          <Button className="w-full rounded-lg" type="button" variant="secondary" onClick={onRequest}>Request top-up</Button>
+          <Button className="w-full rounded-lg" type="button" variant="secondary" onClick={onChoose} disabled={choosing}>{choosing ? "Creating checkout" : "Choose package"}</Button>
           <p className="mt-2 text-center text-xs text-slate-500">
-            {requested ? "Contact an administrator to add this package." : "Request this package from an administrator."}
+            Pay with KHQR. Credits are added after confirmation.
           </p>
         </div>
       </div>
@@ -155,9 +154,20 @@ function PackageCard({ pkg, requested, onRequest }: { pkg: CreditPackage; reques
   );
 }
 
+
+function formatProvider(provider: string) {
+  if (provider === "bakong_khqr") {
+    return "Bakong KHQR";
+  }
+  if (provider === "manual") {
+    return "Manual";
+  }
+  return provider;
+}
+
 function PaymentsTable({ payments, packageNameById }: { payments: Payment[]; packageNameById: Map<string, string> }) {
   if (payments.length === 0) {
-    return <EmptyPanel title="No top-ups yet" message="Admin-created top-ups will appear here after credits are added." />;
+    return <EmptyPanel title="No top-ups yet" message="Package checkouts and admin top-ups will appear here." />;
   }
 
   return (
@@ -166,14 +176,14 @@ function PaymentsTable({ payments, packageNameById }: { payments: Payment[]; pac
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
             <tr>
-              {["Date", "Package", "Amount", "Credits", "Status", "Provider", "Reference"].map((label) => (
+              {["Date", "Package", "Amount", "Credits", "Status", "Provider", "Reference", "Action"].map((label) => (
                 <th key={label} className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 bg-white">
             {payments.map((payment) => {
-              const packageName = payment.packageId ? packageNameById.get(payment.packageId) ?? truncateId(payment.packageId, 8, 4) : "Manual top-up";
+              const packageName = payment.packageName ?? (payment.packageId ? packageNameById.get(payment.packageId) ?? truncateId(payment.packageId, 8, 4) : "Manual top-up");
               return (
                 <tr key={payment.id} className="hover:bg-slate-50">
                   <td className="whitespace-nowrap px-4 py-3 text-slate-600">{formatDateTime(payment.paidAt ?? payment.createdAt)}</td>
@@ -181,8 +191,9 @@ function PaymentsTable({ payments, packageNameById }: { payments: Payment[]; pac
                   <td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-950">{formatMoney(payment.amountMinor, payment.currency)}</td>
                   <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatCredits(payment.creditUnits)}</td>
                   <td className="whitespace-nowrap px-4 py-3"><Badge dot tone={paymentStatusTone(payment.status)}>{payment.status}</Badge></td>
-                  <td className="whitespace-nowrap px-4 py-3 text-slate-700">{payment.provider}</td>
-                  <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-slate-600">{truncateId(payment.providerRef ?? payment.id, 10, 4)}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatProvider(payment.provider)}</td>
+                  <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-slate-600">{truncateId(payment.providerTransactionId ?? payment.adminPaymentReference ?? payment.checkoutReference ?? payment.providerRef ?? payment.id, 10, 4)}</td>
+                  <td className="whitespace-nowrap px-4 py-3"><Link className="text-sm font-semibold text-blue-700 hover:text-blue-800" href={`/checkout/${payment.id}`}>{payment.status === "pending_payment" || payment.status === "pending_proof" || payment.status === "rejected" ? "Continue" : "View"}</Link></td>
                 </tr>
               );
             })}
@@ -219,7 +230,7 @@ function LedgerTable({ ledger }: { ledger: LedgerEntry[] }) {
                   <td className="whitespace-nowrap px-4 py-3"><Badge dot tone={ledgerTone(entry.type)}>{entry.type}</Badge></td>
                   <td className={cn("whitespace-nowrap px-4 py-3 font-semibold", positive ? "text-emerald-700" : "text-red-700")}>{formatDelta(entry.deltaUnits)}</td>
                   <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatCredits(entry.balanceAfterUnits)}</td>
-                  <td className="min-w-56 px-4 py-3 text-slate-700">{entry.reason ?? entry.source ?? "-"}</td>
+                  <td className="min-w-56 px-4 py-3 text-slate-700">{formatLedgerReason(entry)}</td>
                   <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-slate-600">{truncateId(reference, 10, 4)}</td>
                 </tr>
               );
@@ -246,7 +257,9 @@ export default function BillingPage() {
   const [data, setData] = useState<BillingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [requestedPackageId, setRequestedPackageId] = useState<string | null>(null);
+  const router = useRouter();
+  const [choosingPackageId, setChoosingPackageId] = useState<string | null>(null);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
 
   function load() {
     setLoading(true);
@@ -272,6 +285,19 @@ export default function BillingPage() {
   }
 
   useEffect(load, []);
+
+  async function choosePackage(packageId: string) {
+    setChoosingPackageId(packageId);
+    setCheckoutError(null);
+    try {
+      const response = await api.checkout.package(packageId);
+      router.push(`/checkout/${response.payment.id}`);
+    } catch (err) {
+      setCheckoutError(readableError(err));
+    } finally {
+      setChoosingPackageId(null);
+    }
+  }
 
   const payments = data?.payments ?? [];
   const packages = data?.packages ?? [];
@@ -319,14 +345,16 @@ export default function BillingPage() {
             <BalanceCard label="Payment records" value={formatUnits(payments.length)} hint="Current payment history" />
           </section>
 
-          <div className="mt-5"><ManualTopUpBanner /></div>
+          <div className="mt-5"><PaymentCheckoutBanner /></div>
+
+          {checkoutError ? <div className="mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{checkoutError}</div> : null}
 
           <section className="mt-8" id="packages">
-            <SectionHeading title="Available packages" description="Published prepaid bundles available for administrator-managed top-ups." />
+            <SectionHeading title="Available packages" description="Published prepaid bundles available for Bakong KHQR checkout." />
             {packages.length === 0 ? (
               <EmptyPanel
                 title="No credit packages"
-                message="An administrator has not published prepaid packages yet. Contact your administrator to add credits manually."
+                message="An administrator has not published prepaid packages yet."
               />
             ) : (
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -334,8 +362,8 @@ export default function BillingPage() {
                   <PackageCard
                     key={pkg.id}
                     pkg={pkg}
-                    requested={requestedPackageId === pkg.id}
-                    onRequest={() => setRequestedPackageId(pkg.id)}
+                    choosing={choosingPackageId === pkg.id}
+                    onChoose={() => void choosePackage(pkg.id)}
                   />
                 ))}
               </div>
@@ -343,7 +371,7 @@ export default function BillingPage() {
           </section>
 
           <section className="mt-8">
-            <SectionHeading title="Top-up history" description="Manual payments and credit additions recorded for this account." />
+            <SectionHeading title="Payment history" description="Package checkouts and credit additions recorded for this account." />
             <PaymentsTable payments={payments} packageNameById={packageNameById} />
           </section>
 
