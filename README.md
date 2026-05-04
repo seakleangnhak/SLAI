@@ -146,6 +146,24 @@ ADMIN_SEED_PASSWORD=change-me-admin-password \
 go run ./cmd/slai-api seed-admin
 ```
 
+
+## Docker Startup Migrations
+
+The production API image runs `/app/docker-entrypoint.sh` before `serve`. On container startup it will:
+
+1. run `/app/slai-api migrate up` when `SLAI_AUTO_MIGRATE` is unset or `true`, retrying while the database starts;
+2. run `/app/slai-api seed-admin` when `SLAI_AUTO_SEED_ADMIN` is unset or `true` and both `ADMIN_SEED_EMAIL` and `ADMIN_SEED_PASSWORD` are set;
+3. start the API server.
+
+Migrations are idempotent because applied SQL files are tracked in `schema_migrations`, so every deploy can safely run the startup migration step. The admin seed command only creates the admin if it does not already exist; it does not reset an existing admin password.
+
+Disable either startup step only for special operational flows:
+
+```sh
+SLAI_AUTO_MIGRATE=false
+SLAI_AUTO_SEED_ADMIN=false
+```
+
 ## API Environment
 
 API variables live in `services/api/.env.example`.
@@ -162,6 +180,10 @@ Core settings:
 - `SESSION_TTL`
 - `ADMIN_SEED_EMAIL`
 - `ADMIN_SEED_PASSWORD`
+- `SLAI_AUTO_MIGRATE`
+- `SLAI_AUTO_SEED_ADMIN`
+- `SLAI_STARTUP_DB_RETRIES`
+- `SLAI_STARTUP_DB_RETRY_DELAY_SECONDS`
 - `READINESS_TIMEOUT`
 - `SHUTDOWN_TIMEOUT`
 
@@ -253,9 +275,10 @@ SLAI supports Bakong KHQR package checkout through the local `slai-payment` serv
 3. SLAI creates a local `pending_payment` row and asks `slai-payment` to create a KHQR payment.
 4. The checkout page shows the provider-generated KHQR image, amount, reference, and expiry.
 5. User pays in their Bakong or bank app.
-6. `slai-payment` matches the bank/Telegram confirmation and sends SLAI a signed callback.
+6. `slai-payment` matches the bank/Telegram confirmation and sends SLAI a signed `payment.paid` callback.
 7. SLAI verifies the HMAC signature over `timestamp + "." + raw_json_body`, validates amount/currency/reference, marks the payment `paid`, and creates a ledger `payment_credit`.
 8. Ledger crediting uses idempotency key `slai_payment_paid:{payment_id}`, so repeated callbacks do not double-credit.
+9. If `slai-payment` expires a pending checkout, it sends a signed `payment.expired` callback and SLAI marks the local payment `expired` without crediting the ledger.
 
 Callback headers are:
 
@@ -263,7 +286,7 @@ Callback headers are:
 - `X-SLAI-Payment-Signature: v1=<hex-hmac-sha256>`
 - `X-SLAI-Payment-ID`
 
-Provider statuses map to SLAI statuses: `PENDING` -> `pending_payment`, `PAID` -> `paid`, `EXPIRED` -> `expired`, and unsafe or unknown provider states -> `needs_review`. Legacy manual proof endpoints remain for old records, but new checkouts should use slai-payment when `SLAI_PAYMENT_ENABLED=true`.
+Provider statuses map to SLAI statuses: `PENDING` -> `pending_payment`, `PAID` -> `paid`, `EXPIRED` -> `expired`, and unsafe or unknown provider states -> `needs_review`. The `SLAI_PAYMENT_EXPIRY_CHECK_INTERVAL` worker setting belongs to the `slai-payment` service; SLAI only receives and verifies its signed expiry callback. Legacy manual proof endpoints remain for old records, but new checkouts should use slai-payment when `SLAI_PAYMENT_ENABLED=true`.
 
 ## OmniRoute Requirement
 

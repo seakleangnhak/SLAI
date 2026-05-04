@@ -49,6 +49,6 @@ Bakong KHQR package checkout is delegated to the `slai-payment` service. SLAI cr
 
 Payment confirmation is callback-driven. slai-payment signs the exact callback JSON body with `HMAC-SHA256(secret, timestamp + "." + raw_body)` and sends `X-SLAI-Payment-Timestamp`, `X-SLAI-Payment-Signature`, and `X-SLAI-Payment-ID`. SLAI verifies the signature and timestamp tolerance before trusting the payload.
 
-A provider `PAID` status only credits the balance after SLAI validates payment id/reference, amount, and currency. Crediting runs in a database transaction and uses ledger idempotency key `slai_payment_paid:{payment_id}`, so duplicate callbacks or manual refreshes cannot double-credit. Provider transaction ids are unique for paid Bakong payments when present; conflicts move the payment to `needs_review`.
+A provider `PAID` status only credits the balance after SLAI validates payment id/reference, amount, and currency. Crediting runs in a database transaction and uses ledger idempotency key `slai_payment_paid:{payment_id}`, so duplicate callbacks or manual refreshes cannot double-credit. Provider transaction ids are unique for paid Bakong payments when present; conflicts move the payment to `needs_review`. A signed `payment.expired` callback maps provider `EXPIRED` to local `expired` and never creates a ledger entry.
 
 Legacy manual proof tables and endpoints remain for old records and fallback operation. Stored files live under `STORAGE_DIR/payment-settings` and `STORAGE_DIR/payment-proofs`; APIs return controlled file endpoints, never raw local paths.

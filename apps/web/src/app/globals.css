@@ -1,8 +1,17 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #f7f8fb;
   --foreground: #101828;
+  color-scheme: light;
+}
+
+:root.dark {
+  --background: #020617;
+  --foreground: #cbd5e1;
+  color-scheme: dark;
 }
 
 * {
@@ -37,4 +46,473 @@ a:not([class]) {
     opacity: 1;
     transform: translateX(0);
   }
+}
+
+
+.dark body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.dark input,
+.dark textarea,
+.dark select {
+  color-scheme: dark;
+}
+
+/* Dark mode compatibility for existing slate-heavy Tailwind utilities. */
+.dark [class~="bg-[#f8fafc]"],
+.dark .bg-slate-50 {
+  background-color: #020617 !important;
+}
+
+.dark .bg-white,
+.dark [class~="bg-white/80"],
+.dark [class~="bg-white/85"],
+.dark [class~="bg-white/90"],
+.dark [class~="bg-white/95"] {
+  background-color: rgb(15 23 42 / 0.94) !important;
+}
+
+.dark .bg-slate-100 {
+  background-color: rgb(30 41 59 / 0.9) !important;
+}
+
+.dark .bg-slate-200,
+.dark [class~="hover:bg-slate-200/60"]:hover {
+  background-color: rgb(51 65 85 / 0.85) !important;
+}
+
+.dark [class~="hover:bg-slate-100"]:hover,
+.dark [class~="hover:bg-slate-50"]:hover {
+  background-color: rgb(30 41 59 / 0.9) !important;
+}
+
+.dark .bg-blue-50,
+.dark [class~="hover:bg-blue-50"]:hover {
+  background-color: rgb(30 58 138 / 0.28) !important;
+}
+
+.dark .bg-cyan-50 {
+  background-color: rgb(21 94 117 / 0.26) !important;
+}
+
+.dark .bg-emerald-50 {
+  background-color: rgb(6 95 70 / 0.24) !important;
+}
+
+.dark .bg-amber-50 {
+  background-color: rgb(146 64 14 / 0.22) !important;
+}
+
+.dark .bg-red-50 {
+  background-color: rgb(153 27 27 / 0.24) !important;
+}
+
+.dark .bg-violet-50 {
+  background-color: rgb(91 33 182 / 0.24) !important;
+}
+
+.dark .border-slate-200,
+.dark .border-slate-300 {
+  border-color: rgb(51 65 85 / 0.9) !important;
+}
+
+.dark .border-red-200 {
+  border-color: rgb(127 29 29 / 0.8) !important;
+}
+
+.dark .divide-slate-200 > :not([hidden]) ~ :not([hidden]) {
+  border-color: rgb(51 65 85 / 0.9) !important;
+}
+
+.dark .ring-slate-200,
+.dark [class~="ring-slate-200/70"] {
+  --tw-ring-color: rgb(51 65 85 / 0.75) !important;
+}
+
+.dark .text-slate-950,
+.dark .text-slate-900,
+.dark .text-slate-800 {
+  color: #e2e8f0 !important;
+}
+
+.dark .text-slate-700 {
+  color: #cbd5e1 !important;
+}
+
+.dark .text-slate-600,
+.dark .text-slate-500 {
+  color: #94a3b8 !important;
+}
+
+.dark .text-slate-400 {
+  color: #64748b !important;
+}
+
+.dark .text-blue-700,
+.dark .text-blue-600 {
+  color: #93c5fd !important;
+}
+
+.dark .text-cyan-700,
+.dark .text-cyan-600 {
+  color: #67e8f9 !important;
+}
+
+.dark .text-emerald-700 {
+  color: #86efac !important;
+}
+
+.dark .text-amber-700 {
+  color: #fcd34d !important;
+}
+
+.dark .text-red-900,
+.dark .text-red-700,
+.dark .text-red-600 {
+  color: #fca5a5 !important;
+}
+
+.dark .text-violet-700 {
+  color: #c4b5fd !important;
+}
+
+.dark [class~="placeholder:text-slate-400"]::placeholder,
+.dark [class~="placeholder:text-slate-500"]::placeholder {
+  color: #64748b !important;
+}
+
+.dark .shadow-sm {
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.35) !important;
+}
+
+
+.dark [class~="bg-[#f5f7fb]"],
+.dark [class~="bg-slate-50/80"],
+.dark [class~="bg-slate-50/95"] {
+  background-color: #020617 !important;
+}
+
+.dark [class~="bg-blue-50/40"] {
+  background-color: rgb(30 58 138 / 0.18) !important;
+}
+
+.dark [class~="bg-white/95"] {
+  background-color: rgb(15 23 42 / 0.96) !important;
+}
+
+.dark [class~="border-white/80"],
+.dark .border-blue-200,
+.dark [class~="hover:border-blue-200"]:hover,
+.dark [class~="hover:border-slate-300"]:hover {
+  border-color: rgb(51 65 85 / 0.9) !important;
+}
+
+.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]) {
+  border-color: rgb(30 41 59 / 0.95) !important;
+}
+
+.dark [class~="from-slate-50"] {
+  --tw-gradient-from: rgb(15 23 42 / 0.92) var(--tw-gradient-from-position) !important;
+  --tw-gradient-to: rgb(15 23 42 / 0) var(--tw-gradient-to-position) !important;
+  --tw-gradient-stops: var(--tw-gradient-via-stops, var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position)) !important;
+}
+
+.dark [class~="via-blue-50/70"] {
+  --tw-gradient-via: rgb(30 58 138 / 0.22) var(--tw-gradient-via-position) !important;
+  --tw-gradient-via-stops: var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-via) var(--tw-gradient-via-position), var(--tw-gradient-to) var(--tw-gradient-to-position) !important;
+}
+
+.dark [class~="to-white"],
+.dark [class~="to-cyan-50"] {
+  --tw-gradient-to: rgb(15 23 42 / 0.98) var(--tw-gradient-to-position) !important;
+}
+
+.dark [class~="disabled:bg-slate-50"]:disabled {
+  background-color: rgb(15 23 42 / 0.85) !important;
+}
+
+.dark [class~="file:bg-slate-950"]::file-selector-button {
+  background-color: #e2e8f0 !important;
+  color: #020617 !important;
+}
+
+.dark [class~="hover:file:bg-slate-800"]:hover::file-selector-button {
+  background-color: #e2e8f0 !important;
+}
+
+
+/* Admin dark mode refinements for tables, forms, drawers, and status surfaces. */
+.dark .border-slate-100,
+.dark .border-slate-200,
+.dark .border-slate-300,
+.dark [class~="border-slate-100"],
+.dark [class~="border-slate-200"],
+.dark [class~="border-slate-300"] {
+  border-color: rgb(51 65 85 / 0.72) !important;
+}
+
+.dark [class~="border-b"],
+.dark [class~="border-t"],
+.dark [class~="border-l"],
+.dark [class~="border-r"] {
+  border-color: rgb(51 65 85 / 0.72);
+}
+
+.dark [class~="divide-y"],
+.dark [class~="divide-x"] {
+  border-color: rgb(51 65 85 / 0.72);
+}
+
+.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]),
+.dark .divide-slate-200 > :not([hidden]) ~ :not([hidden]) {
+  border-color: rgb(51 65 85 / 0.62) !important;
+}
+
+.dark [class~="bg-slate-50/95"],
+.dark [class~="bg-slate-50/80"],
+.dark [class~="bg-slate-50/60"],
+.dark [class~="bg-slate-50"] {
+  background-color: rgb(15 23 42 / 0.9) !important;
+}
+
+.dark [class~="bg-white/95"],
+.dark [class~="bg-white/90"],
+.dark [class~="bg-white/85"],
+.dark [class~="bg-white/80"],
+.dark [class~="bg-white"] {
+  background-color: rgb(15 23 42 / 0.94) !important;
+}
+
+.dark [class~="hover:bg-slate-50"]:hover,
+.dark [class~="hover:bg-slate-100"]:hover {
+  background-color: rgb(30 41 59 / 0.74) !important;
+}
+
+.dark .ring-slate-100,
+.dark .ring-slate-200,
+.dark [class~="ring-slate-100"],
+.dark [class~="ring-slate-200"],
+.dark [class~="ring-blue-100"] {
+  --tw-ring-color: rgb(51 65 85 / 0.72) !important;
+}
+
+.dark .border-blue-100,
+.dark .border-blue-200,
+.dark [class~="border-blue-100"],
+.dark [class~="border-blue-200"] {
+  border-color: rgb(37 99 235 / 0.48) !important;
+}
+
+.dark .border-emerald-200,
+.dark [class~="border-emerald-200"] {
+  border-color: rgb(16 185 129 / 0.42) !important;
+}
+
+.dark .border-amber-200,
+.dark [class~="border-amber-200"] {
+  border-color: rgb(245 158 11 / 0.42) !important;
+}
+
+.dark .border-red-200,
+.dark .border-red-300,
+.dark [class~="border-red-200"],
+.dark [class~="border-red-300"] {
+  border-color: rgb(248 113 113 / 0.42) !important;
+}
+
+.dark .border-cyan-200,
+.dark [class~="border-cyan-200"] {
+  border-color: rgb(34 211 238 / 0.36) !important;
+}
+
+.dark .border-violet-200,
+.dark [class~="border-violet-200"] {
+  border-color: rgb(167 139 250 / 0.42) !important;
+}
+
+.dark [class~="bg-amber-100"],
+.dark [class~="bg-amber-50"],
+.dark [class~="hover:bg-amber-100"]:hover {
+  background-color: rgb(120 53 15 / 0.36) !important;
+}
+
+.dark [class~="bg-emerald-100"],
+.dark [class~="bg-emerald-50"],
+.dark [class~="hover:bg-emerald-100"]:hover {
+  background-color: rgb(6 78 59 / 0.36) !important;
+}
+
+.dark [class~="bg-red-100"],
+.dark [class~="bg-red-50"],
+.dark [class~="hover:bg-red-100"]:hover {
+  background-color: rgb(127 29 29 / 0.34) !important;
+}
+
+.dark [class~="bg-blue-100"],
+.dark [class~="bg-blue-50"],
+.dark [class~="hover:bg-blue-100"]:hover {
+  background-color: rgb(30 58 138 / 0.34) !important;
+}
+
+.dark [class~="bg-violet-50"],
+.dark [class~="bg-violet-100"] {
+  background-color: rgb(76 29 149 / 0.34) !important;
+}
+
+.dark [class~="text-amber-700"],
+.dark [class~="text-amber-800"],
+.dark [class~="text-amber-900"] {
+  color: #fcd34d !important;
+}
+
+.dark [class~="text-emerald-700"],
+.dark [class~="text-emerald-800"],
+.dark [class~="text-emerald-900"] {
+  color: #86efac !important;
+}
+
+.dark [class~="text-blue-700"],
+.dark [class~="text-blue-800"],
+.dark [class~="text-blue-900"] {
+  color: #93c5fd !important;
+}
+
+.dark [class~="text-red-700"],
+.dark [class~="text-red-800"],
+.dark [class~="text-red-900"] {
+  color: #fca5a5 !important;
+}
+
+.dark [class~="text-violet-700"],
+.dark [class~="text-violet-800"] {
+  color: #c4b5fd !important;
+}
+
+.dark [class~="from-white"],
+.dark [class~="from-slate-50"] {
+  --tw-gradient-from: rgb(15 23 42 / 0.96) var(--tw-gradient-from-position) !important;
+  --tw-gradient-to: rgb(15 23 42 / 0) var(--tw-gradient-to-position) !important;
+  --tw-gradient-stops: var(--tw-gradient-via-stops, var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position)) !important;
+}
+
+.dark [class~="via-white"] {
+  --tw-gradient-via: rgb(15 23 42 / 0.92) var(--tw-gradient-via-position) !important;
+  --tw-gradient-via-stops: var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-via) var(--tw-gradient-via-position), var(--tw-gradient-to) var(--tw-gradient-to-position) !important;
+}
+
+.dark [class~="to-white"] {
+  --tw-gradient-to: rgb(15 23 42 / 0.96) var(--tw-gradient-to-position) !important;
+}
+
+.dark [class~="to-amber-50/70"],
+.dark [class~="from-amber-50"] {
+  --tw-gradient-to: rgb(120 53 15 / 0.3) var(--tw-gradient-to-position) !important;
+}
+
+.dark [class~="to-blue-50"],
+.dark [class~="to-blue-50/60"] {
+  --tw-gradient-to: rgb(30 58 138 / 0.3) var(--tw-gradient-to-position) !important;
+}
+
+.dark [class~="to-emerald-50/60"] {
+  --tw-gradient-to: rgb(6 78 59 / 0.3) var(--tw-gradient-to-position) !important;
+}
+
+.dark [class~="to-red-50/60"] {
+  --tw-gradient-to: rgb(127 29 29 / 0.3) var(--tw-gradient-to-position) !important;
+}
+
+.dark [class~="to-cyan-50/60"],
+.dark [class~="to-cyan-50"] {
+  --tw-gradient-to: rgb(21 94 117 / 0.3) var(--tw-gradient-to-position) !important;
+}
+
+.dark [class~="to-violet-50/60"] {
+  --tw-gradient-to: rgb(76 29 149 / 0.3) var(--tw-gradient-to-position) !important;
+}
+
+.dark table thead {
+  background-color: rgb(2 6 23 / 0.64);
+}
+
+.dark table tbody {
+  background-color: rgb(15 23 42 / 0.46);
+}
+
+.dark table tr:hover {
+  background-color: rgb(30 41 59 / 0.42) !important;
+}
+
+.dark table tr,
+.dark table th,
+.dark table td {
+  border-color: rgb(51 65 85 / 0.62) !important;
+}
+
+.dark table tbody tr + tr,
+.dark table tbody tr + tr > th,
+.dark table tbody tr + tr > td {
+  border-top-color: rgb(51 65 85 / 0.62) !important;
+}
+
+.dark table > :not([hidden]) ~ :not([hidden]),
+.dark thead + tbody,
+.dark table thead,
+.dark table tbody {
+  border-color: rgb(51 65 85 / 0.62) !important;
+}
+
+.dark table thead tr,
+.dark table thead th {
+  border-bottom-color: rgb(51 65 85 / 0.62) !important;
+}
+
+
+.dark [class~="from-amber-50"] {
+  --tw-gradient-from: rgb(120 53 15 / 0.32) var(--tw-gradient-from-position) !important;
+  --tw-gradient-stops: var(--tw-gradient-via-stops, var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position)) !important;
+}
+
+.dark [class~="from-emerald-50"] {
+  --tw-gradient-from: rgb(6 78 59 / 0.32) var(--tw-gradient-from-position) !important;
+  --tw-gradient-stops: var(--tw-gradient-via-stops, var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position)) !important;
+}
+
+.dark [class~="from-red-50"] {
+  --tw-gradient-from: rgb(127 29 29 / 0.3) var(--tw-gradient-from-position) !important;
+  --tw-gradient-stops: var(--tw-gradient-via-stops, var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position)) !important;
+}
+
+
+/* Soften pure white utilities in dark mode. */
+.dark .text-white,
+.dark [class~="text-white"],
+.dark [class~="dark:text-white"],
+.dark [class~="dark:text-slate-50"],
+.dark [class~="text-slate-50"] {
+  color: #e2e8f0 !important;
+}
+
+.dark [class~="hover:text-white"]:hover,
+.dark [class~="dark:hover:text-white"]:hover {
+  color: #e2e8f0 !important;
+}
+
+.dark [class~="bg-white"] {
+  background-color: rgb(15 23 42 / 0.94) !important;
+}
+
+.dark [class~="dark:hover:bg-white"]:hover,
+.dark [class~="hover:bg-white"]:hover {
+  background-color: #e2e8f0 !important;
+}
+
+.dark [class~="dark:bg-slate-100"] {
+  background-color: #dbe4ef !important;
+}
+
+.dark [class~="dark:text-slate-950"] {
+  color: #0f172a !important;
 }

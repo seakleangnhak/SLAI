@@ -24,6 +24,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/slai/slai/services/api/internal/apikeys"
 	"github.com/slai/slai/services/api/internal/auth"
 	"github.com/slai/slai/services/api/internal/config"
 	"github.com/slai/slai/services/api/internal/ledger"
@@ -537,6 +538,13 @@ func TestManualTopUpLedgerMutationAndBalanceUpdate(t *testing.T) {
 	adminUser := createUser(t, "admin@example.com", users.RoleAdmin)
 	user := createUser(t, "user@example.com", users.RoleUser)
 	adminCookies := loginCookies(t, client, adminUser.Email)
+	userCookies := loginCookies(t, client, user.Email)
+
+	createdKey := client.post(t, "/v1/api-key", map[string]any{"name": "Default"}, userCookies)
+	assertStatus(t, createdKey, http.StatusCreated)
+	suspendedKey := client.post(t, "/v1/admin/users/"+user.ID+"/api-key/suspend", map[string]any{}, adminCookies)
+	assertStatus(t, suspendedKey, http.StatusOK)
+	assertCurrentAPIKeyStatus(t, user.ID, apikeys.StatusSuspended)
 
 	topup := client.postWithHeaders(t, "/v1/admin/payments/manual-topup", map[string]any{
 		"userId":      user.ID,
@@ -552,6 +560,7 @@ func TestManualTopUpLedgerMutationAndBalanceUpdate(t *testing.T) {
 	if got := stringField(t, topup.JSON, "ledger.type"); got != ledger.TypePaymentCredit {
 		t.Fatalf("ledger.type = %q", got)
 	}
+	assertCurrentAPIKeyStatus(t, user.ID, apikeys.StatusActive)
 
 	replay := client.postWithHeaders(t, "/v1/admin/payments/manual-topup", map[string]any{
 		"userId":      user.ID,
@@ -581,7 +590,7 @@ func TestManualTopUpLedgerMutationAndBalanceUpdate(t *testing.T) {
 	}
 
 	var auditCount int
-	if err := testDB.QueryRow(context.Background(), `SELECT count(*) FROM admin_audit_logs WHERE admin_id = $1`, adminUser.ID).Scan(&auditCount); err != nil {
+	if err := testDB.QueryRow(context.Background(), `SELECT count(*) FROM admin_audit_logs WHERE admin_id = $1 AND action = 'manual_topup_created'`, adminUser.ID).Scan(&auditCount); err != nil {
 		t.Fatal(err)
 	}
 	if auditCount != 1 {
@@ -744,6 +753,12 @@ func TestSLAIPaymentCheckoutAndSignedCallbackCreditsBalance(t *testing.T) {
 	adminCookies := loginCookies(t, client, adminUser.Email)
 	userCookies := loginCookies(t, client, user.Email)
 
+	createdKey := client.post(t, "/v1/api-key", map[string]any{"name": "Default"}, userCookies)
+	assertStatus(t, createdKey, http.StatusCreated)
+	suspendedKey := client.post(t, "/v1/admin/users/"+user.ID+"/api-key/suspend", map[string]any{}, adminCookies)
+	assertStatus(t, suspendedKey, http.StatusOK)
+	assertCurrentAPIKeyStatus(t, user.ID, apikeys.StatusSuspended)
+
 	providerStatus := client.get(t, "/v1/admin/payment-settings/bakong-khqr/provider-status", adminCookies)
 	assertStatus(t, providerStatus, http.StatusOK)
 	if got := boolField(t, providerStatus.JSON, "provider_status.enabled"); !got {
@@ -768,6 +783,7 @@ func TestSLAIPaymentCheckoutAndSignedCallbackCreditsBalance(t *testing.T) {
 	checkout := client.post(t, "/v1/checkout/package/"+packageID, map[string]any{}, userCookies)
 	assertStatus(t, checkout, http.StatusCreated)
 	paymentID := stringField(t, checkout.JSON, "payment.id")
+	checkoutExpiresAt := stringField(t, checkout.JSON, "payment.expiresAt")
 	if got := stringField(t, checkout.JSON, "payment.status"); got != "pending_payment" {
 		t.Fatalf("checkout status = %q", got)
 	}
@@ -781,6 +797,7 @@ func TestSLAIPaymentCheckoutAndSignedCallbackCreditsBalance(t *testing.T) {
 	external := fakePayments.payments[fakePayments.created[0].Reference]
 	paidAt := time.Now().UTC()
 	external.Status = "PAID"
+	external.ExpiresAt = time.Time{}
 	external.PaidAt = &paidAt
 	external.Telegram = &slaipayment.TelegramPayment{
 		Amount:        "1.00",
@@ -798,6 +815,7 @@ func TestSLAIPaymentCheckoutAndSignedCallbackCreditsBalance(t *testing.T) {
 		t.Fatalf("callback balance = %v", got)
 	}
 	assertBalance(t, user.ID, 1250000)
+	assertCurrentAPIKeyStatus(t, user.ID, apikeys.StatusActive)
 
 	duplicate := client.postSignedSLAIPaymentCallback(t, callback, "callback-secret")
 	assertStatus(t, duplicate, http.StatusOK)
@@ -811,6 +829,161 @@ func TestSLAIPaymentCheckoutAndSignedCallbackCreditsBalance(t *testing.T) {
 	if got := stringField(t, payment.JSON, "payment.providerTransactionId"); got != "177754980382419" {
 		t.Fatalf("provider transaction id = %q", got)
 	}
+	if got := stringField(t, payment.JSON, "payment.expiresAt"); got != checkoutExpiresAt {
+		t.Fatalf("payment expiry = %q, want preserved checkout expiry %q", got, checkoutExpiresAt)
+	}
+}
+
+func TestSLAIPaymentSignedExpiredCallbackMarksPaymentExpired(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	fakePayments := newFakeSLAIPaymentClient()
+	client := newTestClientWithSLAIPayment(t, fakePayments, "callback-secret")
+	adminUser := createUser(t, "expiry-admin@example.com", users.RoleAdmin)
+	user := createUser(t, "expiry-user@example.com", users.RoleUser)
+	adminCookies := loginCookies(t, client, adminUser.Email)
+	userCookies := loginCookies(t, client, user.Email)
+
+	pkgResp := client.post(t, "/v1/admin/packages", map[string]any{
+		"name":             "Expiry Starter",
+		"description":      "Expiring payment package",
+		"creditUnits":      2000000,
+		"bonusCreditUnits": 0,
+		"priceMinor":       250,
+		"currency":         "USD",
+		"active":           true,
+	}, adminCookies)
+	assertStatus(t, pkgResp, http.StatusCreated)
+	packageID := stringField(t, pkgResp.JSON, "package.id")
+
+	checkout := client.post(t, "/v1/checkout/package/"+packageID, map[string]any{}, userCookies)
+	assertStatus(t, checkout, http.StatusCreated)
+	paymentID := stringField(t, checkout.JSON, "payment.id")
+	if got := stringField(t, checkout.JSON, "payment.status"); got != "pending_payment" {
+		t.Fatalf("checkout status = %q", got)
+	}
+
+	external := fakePayments.payments[fakePayments.created[0].Reference]
+	external.Status = "EXPIRED"
+	external.ExpiresAt = time.Now().UTC().Add(-1 * time.Minute)
+	callback := slaipayment.CallbackPayload{Event: "payment.expired", Payment: external}
+	callbackResp := client.postSignedSLAIPaymentCallback(t, callback, "callback-secret")
+	assertStatus(t, callbackResp, http.StatusOK)
+	if got := stringField(t, callbackResp.JSON, "payment.status"); got != "expired" {
+		t.Fatalf("expired callback payment status = %q", got)
+	}
+	assertBalance(t, user.ID, 0)
+
+	var ledgerCount int
+	if err := testDB.QueryRow(context.Background(), `SELECT count(*) FROM credit_ledger_entries WHERE user_id = $1`, user.ID).Scan(&ledgerCount); err != nil {
+		t.Fatal(err)
+	}
+	if ledgerCount != 0 {
+		t.Fatalf("ledger entries = %d, want 0", ledgerCount)
+	}
+
+	payment := client.get(t, "/v1/payments/"+paymentID, userCookies)
+	assertStatus(t, payment, http.StatusOK)
+	if got := stringField(t, payment.JSON, "payment.status"); got != "expired" {
+		t.Fatalf("stored payment status = %q", got)
+	}
+	if got := stringField(t, payment.JSON, "payment.providerStatus"); got != "EXPIRED" {
+		t.Fatalf("provider status = %q", got)
+	}
+}
+
+func TestAdminCanResolveSLAIPaymentNeedsReview(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	fakePayments := newFakeSLAIPaymentClient()
+	client := newTestClientWithSLAIPayment(t, fakePayments, "callback-secret")
+	adminUser := createUser(t, "review-admin@example.com", users.RoleAdmin)
+	user := createUser(t, "review-user@example.com", users.RoleUser)
+	adminCookies := loginCookies(t, client, adminUser.Email)
+	userCookies := loginCookies(t, client, user.Email)
+
+	pkgResp := client.post(t, "/v1/admin/packages", map[string]any{
+		"name":             "Review Starter",
+		"description":      "Review package",
+		"creditUnits":      1000000,
+		"bonusCreditUnits": 250000,
+		"priceMinor":       100,
+		"currency":         "USD",
+		"active":           true,
+	}, adminCookies)
+	assertStatus(t, pkgResp, http.StatusCreated)
+	packageID := stringField(t, pkgResp.JSON, "package.id")
+
+	checkout := client.post(t, "/v1/checkout/package/"+packageID, map[string]any{}, userCookies)
+	assertStatus(t, checkout, http.StatusCreated)
+	paymentID := stringField(t, checkout.JSON, "payment.id")
+	external := fakePayments.payments[fakePayments.created[0].Reference]
+	paidAt := time.Now().UTC()
+	external.Status = "PAID"
+	external.Amount = "2.00"
+	external.PaidAt = &paidAt
+	external.Telegram = &slaipayment.TelegramPayment{
+		Amount:        "2.00",
+		Currency:      "USD",
+		PaidAt:        paidAt,
+		MerchantName:  external.MerchantName,
+		Reference:     external.Reference,
+		TransactionID: "needs-review-tx-1",
+		APV:           "needs-review-apv-1",
+	}
+	callback := client.postSignedSLAIPaymentCallback(t, slaipayment.CallbackPayload{Event: "payment.paid", Payment: external}, "callback-secret")
+	assertStatus(t, callback, http.StatusOK)
+	if got := stringField(t, callback.JSON, "payment.status"); got != "needs_review" {
+		t.Fatalf("callback status = %q", got)
+	}
+	assertBalance(t, user.ID, 0)
+
+	reviewQueue := client.get(t, "/v1/admin/payments?status=review_queue", adminCookies)
+	assertStatus(t, reviewQueue, http.StatusOK)
+	if got := numberField(t, reviewQueue.JSON, "total"); got != 1 {
+		t.Fatalf("review queue total = %v", got)
+	}
+
+	approved := client.post(t, "/v1/admin/payments/"+paymentID+"/approve", map[string]any{
+		"payment_reference": "needs-review-tx-1",
+		"note":              "Verified mismatch manually",
+	}, adminCookies)
+	assertStatus(t, approved, http.StatusOK)
+	if got := stringField(t, approved.JSON, "payment.status"); got != "paid" {
+		t.Fatalf("approved status = %q", got)
+	}
+	if got := numberField(t, approved.JSON, "balance.availableUnits"); got != 1250000 {
+		t.Fatalf("balance.availableUnits = %v", got)
+	}
+
+	secondCheckout := client.post(t, "/v1/checkout/package/"+packageID, map[string]any{}, userCookies)
+	assertStatus(t, secondCheckout, http.StatusCreated)
+	secondPaymentID := stringField(t, secondCheckout.JSON, "payment.id")
+	secondExternal := fakePayments.payments[fakePayments.created[1].Reference]
+	secondExternal.Status = "PAID"
+	secondExternal.Amount = "2.00"
+	secondExternal.PaidAt = &paidAt
+	secondExternal.Telegram = &slaipayment.TelegramPayment{
+		Amount:        "2.00",
+		Currency:      "USD",
+		PaidAt:        paidAt,
+		MerchantName:  secondExternal.MerchantName,
+		Reference:     secondExternal.Reference,
+		TransactionID: "needs-review-tx-2",
+		APV:           "needs-review-apv-2",
+	}
+	secondCallback := client.postSignedSLAIPaymentCallback(t, slaipayment.CallbackPayload{Event: "payment.paid", Payment: secondExternal}, "callback-secret")
+	assertStatus(t, secondCallback, http.StatusOK)
+	if got := stringField(t, secondCallback.JSON, "payment.status"); got != "needs_review" {
+		t.Fatalf("second callback status = %q", got)
+	}
+
+	rejected := client.post(t, "/v1/admin/payments/"+secondPaymentID+"/reject", map[string]any{"reason": "Amount does not match checkout"}, adminCookies)
+	assertStatus(t, rejected, http.StatusOK)
+	if got := stringField(t, rejected.JSON, "payment.status"); got != "rejected" {
+		t.Fatalf("rejected status = %q", got)
+	}
+	assertBalance(t, user.ID, 1250000)
 }
 
 func TestUserPaymentsListScopedToSessionUser(t *testing.T) {
@@ -1533,6 +1706,23 @@ func assertBalance(t *testing.T, userID string, expected int64) {
 	}
 	if actual != expected {
 		t.Fatalf("balance = %d, want %d", actual, expected)
+	}
+}
+
+func assertCurrentAPIKeyStatus(t *testing.T, userID string, expected string) {
+	t.Helper()
+	var actual string
+	if err := testDB.QueryRow(context.Background(), `
+		SELECT status
+		FROM api_keys
+		WHERE user_id = $1
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+	`, userID).Scan(&actual); err != nil {
+		t.Fatal(err)
+	}
+	if actual != expected {
+		t.Fatalf("api key status = %q, want %q", actual, expected)
 	}
 }
 

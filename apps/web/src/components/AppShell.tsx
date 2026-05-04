@@ -9,6 +9,7 @@ import { cn } from "@/lib/cn";
 import { isAdmin, userInitial } from "@/lib/auth";
 
 import { Button } from "./Button";
+import { ThemeToggle } from "./ThemeToggle";
 
 type AppShellProps = {
   children: React.ReactNode;
@@ -162,8 +163,8 @@ function DashboardFrame({
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-950">
-      <aside className="fixed left-0 top-0 z-40 hidden h-screen w-64 flex-col border-r border-slate-200 bg-slate-50 lg:flex">
+    <div className="min-h-screen bg-slate-50 text-slate-950 dark:bg-slate-950 dark:text-slate-100">
+      <aside className="fixed left-0 top-0 z-40 hidden h-screen w-64 flex-col border-r border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 lg:flex">
         <div className="border-b border-slate-200 px-6 py-5">
           <Link href="/dashboard" className="flex items-center gap-3">
             <span className="grid size-9 place-items-center rounded-lg bg-slate-950 text-sm font-bold text-white shadow-sm">S</span>
@@ -189,6 +190,7 @@ function DashboardFrame({
                   <p className="text-xs text-slate-500">Developer account</p>
                 </div>
               </div>
+              <ThemeToggle className="mb-2 w-full" />
               <Button className="w-full justify-center" type="button" variant="secondary" onClick={logout} disabled={loggingOut}>
                 {loggingOut ? "Signing out" : "Sign out"}
               </Button>
@@ -200,18 +202,21 @@ function DashboardFrame({
       </aside>
 
       <div className="lg:pl-64">
-        <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/80 backdrop-blur-md">
+        <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/80 backdrop-blur-md dark:border-slate-800 dark:bg-slate-950/85">
           <div className="flex min-h-14 flex-col gap-3 px-4 py-3 sm:px-6 xl:flex-row xl:items-center xl:justify-between">
             <div className="flex items-center justify-between gap-3 lg:hidden">
               <Link href="/dashboard" className="flex items-center gap-2">
                 <span className="grid size-8 place-items-center rounded-md bg-slate-950 text-sm font-bold text-white">S</span>
                 <span className="text-sm font-semibold tracking-[0.16em] text-slate-900">SLAI</span>
               </Link>
-              {user ? (
-                <div className="grid size-8 place-items-center rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-700 shadow-sm">
-                  {userInitial(user)}
-                </div>
-              ) : null}
+              <div className="flex items-center gap-2">
+                <ThemeToggle compact />
+                {user ? (
+                  <div className="grid size-8 place-items-center rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                    {userInitial(user)}
+                  </div>
+                ) : null}
+              </div>
             </div>
             <div className="relative w-full max-w-xl">
               <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">/</span>
@@ -222,8 +227,9 @@ function DashboardFrame({
               />
             </div>
             <div className="hidden items-center justify-end gap-4 xl:flex">
+              <ThemeToggle />
               {showAdminLink ? (
-                <Link className="rounded-md px-2 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-50" href="/admin">
+                <Link className="rounded-md px-2 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950/40" href="/admin">
                   Admin
                 </Link>
               ) : null}
@@ -254,11 +260,11 @@ function DashboardNavItem({ item, pathname }: { item: (typeof navItems.dashboard
       className={cn(
         "group flex items-center gap-3 rounded-md border-l-2 px-4 py-2.5 transition-colors",
         active
-          ? "border-blue-600 bg-white text-blue-600 shadow-sm ring-1 ring-slate-200/70"
-          : "border-transparent text-slate-600 hover:bg-slate-200/60 hover:text-slate-950"
+          ? "border-blue-600 bg-white text-blue-600 shadow-sm ring-1 ring-slate-200/70 dark:bg-slate-900 dark:text-blue-300 dark:ring-slate-800/80"
+          : "border-transparent text-slate-600 hover:bg-slate-200/60 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-slate-800/80 dark:hover:text-slate-100"
       )}
     >
-      <span className={cn("grid size-6 place-items-center rounded", active ? "bg-blue-50 text-blue-600" : "bg-slate-100 text-slate-500")}>
+      <span className={cn("grid size-6 place-items-center rounded", active ? "bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300" : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400")}>
         <DashboardNavIcon name={item.icon as DashboardNavIconName} />
       </span>
       {item.label}
@@ -269,7 +275,7 @@ function DashboardNavItem({ item, pathname }: { item: (typeof navItems.dashboard
 function MobileDashboardNavItem({ item, pathname }: { item: (typeof navItems.dashboard)[number] | { href: string; label: string; icon: DashboardNavIconName }; pathname: string }) {
   const active = isActiveDashboardPath(pathname, item.href);
   return (
-    <Link className={cn("whitespace-nowrap rounded-md px-3 py-1.5", active ? "bg-blue-50 text-blue-700" : "text-slate-600")} href={item.href}>
+    <Link className={cn("whitespace-nowrap rounded-md px-3 py-1.5", active ? "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300" : "text-slate-600 dark:text-slate-400")} href={item.href}>
       {item.label}
     </Link>
   );

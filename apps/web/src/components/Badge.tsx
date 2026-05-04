@@ -7,13 +7,13 @@ type BadgeProps = {
 };
 
 const tones = {
-  neutral: "bg-slate-100 text-slate-700",
-  green: "bg-emerald-50 text-emerald-700",
-  red: "bg-red-50 text-red-700",
-  yellow: "bg-amber-50 text-amber-700",
-  cyan: "bg-cyan-50 text-cyan-700",
-  blue: "bg-blue-50 text-blue-700",
-  purple: "bg-violet-50 text-violet-700"
+  neutral: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
+  green: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300",
+  red: "bg-red-50 text-red-700 dark:bg-red-950/50 dark:text-red-300",
+  yellow: "bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300",
+  cyan: "bg-cyan-50 text-cyan-700 dark:bg-cyan-950/50 dark:text-cyan-300",
+  blue: "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300",
+  purple: "bg-violet-50 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300"
 };
 
 const dots = {

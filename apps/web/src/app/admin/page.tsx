@@ -13,16 +13,13 @@ import { LoadingState } from "@/components/LoadingState";
 import { Table, Td, Th } from "@/components/Table";
 import { api, readableError, type AdminDashboard, type AdminDashboardUsage } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { formatCompactCredits, formatCredits, formatDateTime, formatMoney, formatUnits } from "@/lib/format";
-
-const rangeOptions = ["24h", "7d", "30d"];
+import { formatCompactCredits, formatDateTime, formatMoney, formatUnits } from "@/lib/format";
 
 export default function AdminPage() {
   const [dashboard, setDashboard] = useState<AdminDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [range, setRange] = useState("24h");
 
   async function load({ silent = false }: { silent?: boolean } = {}) {
     if (silent) {
@@ -57,26 +54,13 @@ export default function AdminPage() {
     <AdminShell>
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
-          <h1 className="text-3xl font-semibold tracking-[-0.02em] text-slate-950">Dashboard Overview</h1>
+          <h1 className="text-3xl font-semibold tracking-[-0.02em] text-slate-950">Admin overview</h1>
           <p className="mt-1 text-sm text-slate-500">System performance, credits, usage, and billing health.</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex rounded-lg border border-slate-200 bg-slate-100 p-1">
-            {/* TODO: wire range selection when backend dashboard supports date windows. */}
-            {rangeOptions.map((option) => (
-              <button
-                className={cn(
-                  "rounded-md px-3 py-1.5 text-xs font-semibold transition",
-                  range === option ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-950"
-                )}
-                key={option}
-                onClick={() => setRange(option)}
-                type="button"
-              >
-                {option}
-              </button>
-            ))}
-          </div>
+          <span className="inline-flex min-h-9 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500 shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
+            All-time summary
+          </span>
           <Button type="button" onClick={() => load({ silent: true })} disabled={loading || refreshing}>
             {refreshing ? "Refreshing" : "Refresh"}
           </Button>
@@ -107,7 +91,7 @@ export default function AdminPage() {
               icon="R"
               label="Revenue"
               value={formatMoney(dashboard.revenue.total_paid_minor, dashboard.revenue.currency)}
-              hint="Manual top-ups"
+              hint="Paid top-ups"
               footer={<p className="border-t border-slate-100 pt-3 text-xs text-slate-500">Currency: <span className="font-mono text-slate-800">{dashboard.revenue.currency}</span></p>}
             />
             <OverviewMetricCard
@@ -150,7 +134,7 @@ export default function AdminPage() {
             <SyncWorkerCard dashboard={dashboard} />
           </section>
 
-          <section className="mt-6 grid gap-4 xl:grid-cols-3">
+          <section className="mt-6 grid items-start gap-4 xl:grid-cols-3">
             <RecentPaymentsCard dashboard={dashboard} />
             <RecentUsageCard usage={dashboard.recent_usage} />
             <RecentAuditCard dashboard={dashboard} />
@@ -230,49 +214,75 @@ function UsageActivityCard({ usage, totalTokens, totalCost }: { usage: AdminDash
     <Card className="p-4">
       <CardHeader className="mb-4">
         <div>
-          <CardTitle>Usage Activity</CardTitle>
-          <CardDescription>Recent billed and ignored OmniRoute events synced into SLAI.</CardDescription>
+          <CardTitle>Usage activity</CardTitle>
+          <CardDescription>Recent billed and ignored gateway events synced into SLAI.</CardDescription>
         </div>
         <div className="hidden gap-4 text-right text-xs sm:flex">
           <div>
             <p className="text-slate-400">Tokens</p>
-            <p className="font-mono font-semibold text-slate-900">{formatCompact(totalTokens)}</p>
+            <p className="font-mono font-semibold text-slate-900 dark:text-slate-100">{formatCompact(totalTokens)}</p>
           </div>
           <div>
             <p className="text-slate-400">Credits</p>
-            <p className="font-mono font-semibold text-slate-900">{formatCompactCredits(totalCost)}</p>
+            <p className="font-mono font-semibold text-slate-900 dark:text-slate-100">{formatCompactCredits(totalCost)}</p>
           </div>
         </div>
       </CardHeader>
       {usage.length === 0 ? (
-        <EmptyState title="No usage yet" message="Usage activity appears here after OmniRoute logs are ingested." />
+        <EmptyState title="No usage yet" message="Usage activity appears here after gateway logs are ingested." />
       ) : (
         <div className="space-y-3">
-          <div className="flex h-36 items-end gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
-            {usage.map((event) => (
-              <div className="flex min-w-0 flex-1 flex-col items-center gap-2" key={event.id} title={`${event.model ?? "Unknown model"}: ${formatCredits(event.cost_units)} credits`}>
-                <div className="flex h-24 w-full items-end rounded bg-white ring-1 ring-slate-200">
-                  <div
-                    className={cn("w-full rounded-b bg-blue-600", event.status !== "billed" && "bg-amber-500")}
-                    style={{ height: `${Math.max(8, Math.round((event.cost_units / maxCost) * 100))}%` }}
-                  />
-                </div>
-                <span className="max-w-full truncate text-[10px] text-slate-500">{event.model ?? "unknown"}</span>
-              </div>
-            ))}
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/50">
+            <div className="space-y-2">
+              {usage.slice(0, 5).map((event) => (
+                <UsageActivityRow event={event} key={event.id} maxCost={maxCost} />
+              ))}
+            </div>
           </div>
           <div className="grid gap-2 sm:grid-cols-3">
-            {usage.slice(0, 3).map((event) => (
-              <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs" key={event.id}>
-                <p className="truncate font-medium text-slate-900">{event.user_email}</p>
-                <p className="mt-1 truncate text-slate-500">{event.provider ?? "unknown"} / {event.model ?? "unknown"}</p>
-                <p className="mt-2 font-mono text-slate-700">{formatCompact(event.total_tokens)} tokens</p>
-              </div>
-            ))}
+            <ActivitySummary label="Events" value={formatUnits(usage.length)} />
+            <ActivitySummary label="Tokens" value={formatCompact(totalTokens)} />
+            <ActivitySummary label="Credits" value={formatCompactCredits(totalCost)} />
           </div>
         </div>
       )}
     </Card>
+  );
+}
+
+function UsageActivityRow({ event, maxCost }: { event: AdminDashboardUsage; maxCost: number }) {
+  const percent = Math.max(4, Math.min(100, Math.round((event.cost_units / maxCost) * 100)));
+  const billed = event.status === "billed";
+
+  return (
+    <div className="grid gap-3 rounded-lg border border-slate-200 bg-white px-3 py-3 text-xs shadow-sm dark:border-slate-800 dark:bg-slate-900/80 md:grid-cols-[minmax(0,1fr)_160px_120px] md:items-center">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <span className={cn("size-2 rounded-full", billed ? "bg-emerald-500" : "bg-amber-500")} />
+          <p className="truncate font-semibold text-slate-950 dark:text-slate-100">{event.user_email}</p>
+        </div>
+        <p className="mt-1 truncate text-slate-500 dark:text-slate-400">{event.provider ?? "unknown"} / {event.model ?? "unknown"}</p>
+      </div>
+      <div className="min-w-0">
+        <div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+          <div className={cn("h-full rounded-full", billed ? "bg-blue-600" : "bg-amber-500")} style={{ width: percent + "%" }} />
+        </div>
+        <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">{formatCompactCredits(event.cost_units)} credits</p>
+      </div>
+      <div className="flex items-center justify-between gap-3 md:block md:text-right">
+        <Badge tone={statusTone(event.status)}>{event.status}</Badge>
+        <p className="font-mono text-xs font-semibold text-slate-700 dark:text-slate-300 md:mt-1">{formatCompact(event.total_tokens)} tokens</p>
+      </div>
+    </div>
+  );
+}
+
+function ActivitySummary({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs dark:border-slate-800 dark:bg-slate-900/80">
+      <p className="font-semibold uppercase tracking-[0.12em] text-slate-400">{label}</p>
+      <p className="mt-1 font-mono font-semibold text-slate-900 dark:text-slate-100">{value}</p>
+    </div>
   );
 }
 
@@ -284,7 +294,7 @@ function SyncWorkerCard({ dashboard }: { dashboard: AdminDashboard }) {
     <Card className="p-4">
       <CardHeader className="mb-4">
         <div>
-          <CardTitle>Sync Worker</CardTitle>
+          <CardTitle>Sync worker</CardTitle>
           <CardDescription>Automatic call-log ingestion and credit billing.</CardDescription>
         </div>
         <Badge tone={status.last_error ? "red" : status.worker_enabled ? "green" : "neutral"}>{status.last_error ? "Issue" : status.worker_enabled ? "Enabled" : "Off"}</Badge>
@@ -318,12 +328,13 @@ function RecentPaymentsCard({ dashboard }: { dashboard: AdminDashboard }) {
     <Card className="p-4">
       <CardHeader className="mb-4">
         <div>
-          <CardTitle>Recent Payments</CardTitle>
-          <CardDescription>Latest manual top-ups.</CardDescription>
+          <CardTitle>Recent payments</CardTitle>
+          <CardDescription>Latest credit payments.</CardDescription>
         </div>
+        <Link className="text-sm font-semibold text-blue-700 hover:text-blue-800" href="/admin/payments">View all</Link>
       </CardHeader>
       {dashboard.recent_payments.length === 0 ? (
-        <EmptyState title="No payments" message="Manual top-ups will appear here." />
+        <EmptyState title="No payments" message="Credit payments will appear here." />
       ) : (
         <div className="overflow-hidden rounded-lg border border-slate-200">
           <Table className="text-xs">
@@ -355,7 +366,7 @@ function RecentUsageCard({ usage }: { usage: AdminDashboardUsage[] }) {
     <Card className="p-4">
       <CardHeader className="mb-4">
         <div>
-          <CardTitle>Recent Usage</CardTitle>
+          <CardTitle>Recent usage</CardTitle>
           <CardDescription>Latest usage events by user.</CardDescription>
         </div>
         <Link className="text-sm font-semibold text-blue-700 hover:text-blue-800" href="/admin/usage">View all</Link>
@@ -390,7 +401,7 @@ function RecentAuditCard({ dashboard }: { dashboard: AdminDashboard }) {
     <Card className="p-4">
       <CardHeader className="mb-4">
         <div>
-          <CardTitle>Recent Audit Logs</CardTitle>
+          <CardTitle>Recent audit logs</CardTitle>
           <CardDescription>Recent admin actions.</CardDescription>
         </div>
         <Link className="text-sm font-semibold text-blue-700 hover:text-blue-800" href="/admin/audit">View all</Link>
@@ -399,7 +410,7 @@ function RecentAuditCard({ dashboard }: { dashboard: AdminDashboard }) {
         <EmptyState title="No audit logs" message="Admin actions will be recorded here." />
       ) : (
         <div className="space-y-3">
-          {dashboard.recent_audit_logs.map((log) => (
+          {dashboard.recent_audit_logs.slice(0, 4).map((log) => (
             <div className="rounded-lg border border-slate-200 px-3 py-2" key={log.id}>
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">

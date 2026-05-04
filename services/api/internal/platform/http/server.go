@@ -95,12 +95,23 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 		logger,
 	)
 	usageSyncWorker := usage.NewSyncWorker(cfg.UsageSyncWorker, cfg.OmniRoute.Enabled, usageSyncExecutor, usageSyncStatus, logger)
+	autoResumeAPIKey := func(ctx context.Context, userID string, balance ledger.Balance) {
+		if balance.AvailableUnits <= 0 {
+			return
+		}
+		if _, err := apiKeyService.ResumeAPIKey(ctx, userID); err != nil {
+			if errors.Is(err, apikeys.ErrNotFound) || errors.Is(err, apikeys.ErrInsufficientBalance) {
+				return
+			}
+			logger.Warn("api key auto-resume after credit top-up failed", "user_id", userID, "error", err)
+		}
+	}
 	paymentService := payments.NewService(pool, payments.ProviderConfig{
 		SLAIPaymentEnabled:         cfg.SLAIPayment.Enabled,
 		SLAIPaymentCallbackBaseURL: cfg.SLAIPayment.CallbackBaseURL,
 		SLAIPaymentMerchantPrefix:  cfg.SLAIPayment.MerchantPrefix,
 		SLAIPaymentDefaultExpiry:   cfg.SLAIPayment.DefaultExpiry,
-	}).WithSLAIPaymentClient(cfg.SLAIPaymentClient)
+	}).WithSLAIPaymentClient(cfg.SLAIPaymentClient).WithAutoResumeAPIKey(autoResumeAPIKey)
 
 	server := &Server{
 		db:                pool,
@@ -380,7 +391,18 @@ func (s *Server) slaiPaymentCallback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_payment_callback", err)
 		return
 	}
-	if payload.Event != "payment.paid" || payload.Payment.ID == "" {
+	event := strings.TrimSpace(payload.Event)
+	if payload.Payment.ID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_payment_callback", payments.ErrPaymentCallbackInvalid)
+		return
+	}
+	switch event {
+	case "payment.paid":
+	case "payment.expired":
+		if strings.TrimSpace(payload.Payment.Status) == "" {
+			payload.Payment.Status = "EXPIRED"
+		}
+	default:
 		writeError(w, http.StatusBadRequest, "invalid_payment_callback", payments.ErrPaymentCallbackInvalid)
 		return
 	}

@@ -12,6 +12,7 @@ import { AppShell } from "./AppShell";
 import { Button } from "./Button";
 import { Card, CardDescription, CardHeader, CardTitle } from "./Card";
 import { ErrorState } from "./ErrorState";
+import { ThemeToggle } from "./ThemeToggle";
 
 type AdminShellProps = {
   children: React.ReactNode;
@@ -137,8 +138,8 @@ function AdminFrame({ children, user, syncStatus }: { children: React.ReactNode;
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-950">
-      <aside className="fixed left-0 top-0 z-40 hidden h-screen w-64 flex-col border-r border-slate-200 bg-slate-50 lg:flex">
+    <div className="min-h-screen bg-slate-50 text-slate-950 dark:bg-slate-950 dark:text-slate-100">
+      <aside className="fixed left-0 top-0 z-40 hidden h-screen w-64 flex-col border-r border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 lg:flex">
         <div className="border-b border-slate-200 px-6 py-5">
           <Link href="/admin" className="flex items-center gap-3">
             <span className="grid size-9 place-items-center rounded-lg bg-blue-600 text-sm font-bold text-white shadow-sm">S</span>
@@ -161,6 +162,7 @@ function AdminFrame({ children, user, syncStatus }: { children: React.ReactNode;
               <p className="text-xs text-slate-500">Administrator</p>
             </div>
           </div>
+          <ThemeToggle className="mb-2 w-full" />
           <Button className="w-full justify-center" type="button" variant="secondary" onClick={logout} disabled={loggingOut}>
             {loggingOut ? "Signing out" : "Sign out"}
           </Button>
@@ -168,7 +170,7 @@ function AdminFrame({ children, user, syncStatus }: { children: React.ReactNode;
       </aside>
 
       <div className="lg:pl-64">
-        <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/80 backdrop-blur-md">
+        <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/80 backdrop-blur-md dark:border-slate-800 dark:bg-slate-950/85">
           <div className="flex min-h-14 flex-col gap-3 px-4 py-3 sm:px-6 xl:flex-row xl:items-center xl:justify-between">
             <div className="flex items-center gap-3 lg:hidden">
               <Link href="/admin" className="flex items-center gap-2">
@@ -186,7 +188,8 @@ function AdminFrame({ children, user, syncStatus }: { children: React.ReactNode;
               <span className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded border border-slate-300 px-1.5 py-0.5 font-mono text-[10px] text-slate-500 sm:inline">⌘K</span>
             </div>
             <div className="flex items-center justify-between gap-4 xl:justify-end">
-              <Link className="rounded-md px-2 py-1.5 text-sm font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-950" href="/">
+              <ThemeToggle />
+              <Link className="rounded-md px-2 py-1.5 text-sm font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100" href="/">
                 Docs
               </Link>
               <SyncDot status={syncStatus} />
@@ -214,11 +217,11 @@ function AdminNavItem({ item, pathname }: { item: (typeof navItems)[number]; pat
       className={cn(
         "group flex items-center gap-3 rounded-md border-l-2 px-4 py-2.5 transition-colors",
         active
-          ? "border-blue-600 bg-white text-blue-600 shadow-sm ring-1 ring-slate-200/70"
-          : "border-transparent text-slate-600 hover:bg-slate-200/60 hover:text-slate-950"
+          ? "border-blue-600 bg-white text-blue-600 shadow-sm ring-1 ring-slate-200/70 dark:bg-slate-900 dark:text-blue-300 dark:ring-slate-800/80"
+          : "border-transparent text-slate-600 hover:bg-slate-200/60 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-slate-800/80 dark:hover:text-slate-100"
       )}
     >
-      <span className={cn("grid size-6 place-items-center rounded", active ? "bg-blue-50 text-blue-600" : "bg-slate-100 text-slate-500")}>
+      <span className={cn("grid size-6 place-items-center rounded", active ? "bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300" : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400")}>
         <AdminNavIcon name={item.icon} />
       </span>
       {item.label}
@@ -302,7 +305,7 @@ function AdminNavIcon({ name }: { name: AdminNavIconName }) {
 function MobileAdminNavItem({ item, pathname }: { item: (typeof navItems)[number]; pathname: string }) {
   const active = isActiveAdminPath(pathname, item.href);
   return (
-    <Link className={cn("whitespace-nowrap rounded-md px-3 py-1.5", active ? "bg-blue-50 text-blue-700" : "text-slate-600")} href={item.href}>
+    <Link className={cn("whitespace-nowrap rounded-md px-3 py-1.5", active ? "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300" : "text-slate-600 dark:text-slate-400")} href={item.href}>
       {item.label}
     </Link>
   );
@@ -320,7 +323,7 @@ function SyncDot({ status }: { status: SyncStatus | null }) {
   const label = status?.last_error ? "Sync issue" : status?.currently_running ? "Sync running" : status?.worker_enabled ? "Sync OK" : "Sync off";
 
   return (
-    <div className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-slate-600">
+    <div className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-slate-600 dark:text-slate-300">
       <span className={cn("size-2 rounded-full", tone, status?.currently_running && "animate-pulse")} />
       <span>{label}</span>
     </div>
@@ -329,7 +332,7 @@ function SyncDot({ status }: { status: SyncStatus | null }) {
 
 function AdminLoadingState() {
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-950">
+    <div className="min-h-screen bg-slate-50 text-slate-950 dark:bg-slate-950 dark:text-slate-100">
       <aside className="fixed left-0 top-0 z-40 hidden h-screen w-64 flex-col border-r border-slate-200 bg-slate-50 lg:flex">
         <div className="border-b border-slate-200 px-6 py-5">
           <div className="flex items-center gap-3">

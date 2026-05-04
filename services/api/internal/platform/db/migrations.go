@@ -23,6 +23,12 @@ func NewMigrator(pool *pgxpool.Pool, dir string, logger *slog.Logger) Migrator {
 }
 
 func (m Migrator) Up(ctx context.Context) error {
+	release, err := m.acquireMigrationLock(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	if err := m.ensureSchemaMigrations(ctx); err != nil {
 		return err
 	}
@@ -49,6 +55,24 @@ func (m Migrator) Up(ctx context.Context) error {
 
 	m.log.Info("migrations complete", "count", len(migrations), "dir", m.dir)
 	return nil
+}
+
+func (m Migrator) acquireMigrationLock(ctx context.Context) (func(), error) {
+	conn, err := m.pool.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire migration lock connection: %w", err)
+	}
+
+	lockID := AdvisoryLockKey("slai_schema_migrations")
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, lockID); err != nil {
+		conn.Release()
+		return nil, fmt.Errorf("acquire migration lock: %w", err)
+	}
+
+	return func() {
+		defer conn.Release()
+		_, _ = conn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, lockID)
+	}, nil
 }
 
 func (m Migrator) ensureSchemaMigrations(ctx context.Context) error {

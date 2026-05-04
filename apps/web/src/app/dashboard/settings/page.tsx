@@ -128,7 +128,7 @@ function ProductRulesCard() {
       </CardHeader>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
         <RuleItem title="API keys" text="1 active key per user in this MVP." tone="blue" />
-        <RuleItem title="Billing" text="Manual top-up only." tone="yellow" />
+        <RuleItem title="Billing" text="Bakong KHQR checkout with automatic payment status checks." tone="yellow" />
         <RuleItem title="Credits" text="Credits never expire." tone="green" />
         <RuleItem title="Usage" text="Synced asynchronously from provider usage logs." tone="neutral" />
       </div>
@@ -137,7 +137,7 @@ function ProductRulesCard() {
 }
 
 function MvpAvailabilityCard() {
-  const unavailable = ["Change email", "Change password", "Profile editing", "Self-serve checkout"];
+  const unavailable = ["Change email", "Change password", "Profile editing", "Card or Stripe checkout"];
 
   return (
     <Card className="rounded-2xl border-slate-200 bg-slate-50 p-5">
@@ -145,7 +145,7 @@ function MvpAvailabilityCard() {
         <div>
           <CardTitle>Not available in this MVP</CardTitle>
           <CardDescription>
-            These settings are not user-editable yet. SLAI currently supports session-based access, API key management, usage visibility, and ledger-backed billing.
+            These settings are not user-editable yet. SLAI currently supports session-based access, API key management, usage visibility, Bakong KHQR checkout, and ledger-backed billing.
           </CardDescription>
         </div>
       </CardHeader>

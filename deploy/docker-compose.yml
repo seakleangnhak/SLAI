@@ -15,48 +15,6 @@ services:
       timeout: 5s
       retries: 10
 
-  api-migrate:
-    build:
-      context: ..
-      dockerfile: services/api/Dockerfile
-    environment:
-      APP_ENV: development
-      DATABASE_URL: postgres://slai:slai@postgres:5432/slai?sslmode=disable
-      MIGRATIONS_DIR: /app/db/migrations
-      LOG_LEVEL: info
-      SESSION_SECRET: dev-only-change-me
-      COOKIE_SECURE: "false"
-      SESSION_TTL: 168h
-      API_KEY_PEPPER: dev-only-change-me-api-key-pepper
-      API_KEY_PREFIX: sk_slai
-      OMNIROUTE_ENABLED: "false"
-      OMNIROUTE_BASE_URL: http://omniroute:4000
-      OMNIROUTE_MANAGEMENT_TOKEN: ""
-      OMNIROUTE_USAGE_SYNC_MODE: call_logs
-      OMNIROUTE_HTTP_TIMEOUT_SECONDS: "15"
-      OMNIROUTE_CALL_LOG_LIMIT: "100"
-      USAGE_SYNC_WORKER_ENABLED: "false"
-      USAGE_SYNC_INTERVAL_SECONDS: "60"
-      USAGE_SYNC_LOCK_KEY: slai_usage_sync
-      USAGE_SYNC_BATCH_LIMIT: ""
-      USAGE_SYNC_START_DELAY_SECONDS: "10"
-      STORAGE_DIR: /app/storage
-      PAYMENT_PROOF_MAX_MB: "5"
-      PAYMENT_QR_MAX_MB: "2"
-      SLAI_PAYMENT_ENABLED: "false"
-      SLAI_PAYMENT_BASE_URL: http://slai-payment:8090
-      SLAI_PAYMENT_API_KEY: ""
-      SLAI_PAYMENT_CALLBACK_BASE_URL: http://api:8080
-      SLAI_PAYMENT_CALLBACK_SECRET: dev-only-change-me-payment-callback-secret
-      SLAI_PAYMENT_MERCHANT_PREFIX: SLAI
-      SLAI_PAYMENT_DEFAULT_EXPIRY: 30m
-      SLAI_PAYMENT_HTTP_TIMEOUT: 10s
-    command: ["/app/slai-api", "migrate", "up"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: "no"
-
   api:
     build:
       context: ..
@@ -74,6 +32,10 @@ services:
       API_KEY_PREFIX: sk_slai
       ADMIN_SEED_EMAIL: admin@example.com
       ADMIN_SEED_PASSWORD: change-me-admin-password
+      SLAI_AUTO_MIGRATE: "true"
+      SLAI_AUTO_SEED_ADMIN: "true"
+      SLAI_STARTUP_DB_RETRIES: "30"
+      SLAI_STARTUP_DB_RETRY_DELAY_SECONDS: "2"
       READINESS_TIMEOUT: 2s
       SHUTDOWN_TIMEOUT: 10s
       OMNIROUTE_ENABLED: "false"
@@ -105,8 +67,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      api-migrate:
-        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz | grep OK"]
       interval: 10s

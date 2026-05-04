@@ -498,8 +498,11 @@ func truncateTables(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, err = testDB.Exec(context.Background(), `DELETE FROM pricing_rules`)
+	if err != nil {
+		t.Fatal(err)
+	}
 	_, err = testDB.Exec(context.Background(), `
-		DELETE FROM pricing_rules;
 		INSERT INTO pricing_rules (provider, model, input_cost_units_per_1k, output_cost_units_per_1k, active)
 		VALUES (NULL, NULL, $1, $1, true)
 	`, credits.Scale)

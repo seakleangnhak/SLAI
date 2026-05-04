@@ -47,10 +47,13 @@ type ProviderConfig struct {
 	SLAIPaymentDefaultExpiry   time.Duration
 }
 
+type AutoResumeAPIKeyFunc func(ctx context.Context, userID string, balance ledger.Balance)
+
 type Service struct {
 	pool              *pgxpool.Pool
 	cfg               ProviderConfig
 	slaiPaymentClient slaipayment.Client
+	autoResumeAPIKey  AutoResumeAPIKeyFunc
 }
 
 func NewService(pool *pgxpool.Pool, cfgs ...ProviderConfig) Service {
@@ -64,6 +67,22 @@ func NewService(pool *pgxpool.Pool, cfgs ...ProviderConfig) Service {
 func (s Service) WithSLAIPaymentClient(client slaipayment.Client) Service {
 	s.slaiPaymentClient = client
 	return s
+}
+
+func (s Service) WithAutoResumeAPIKey(fn AutoResumeAPIKeyFunc) Service {
+	s.autoResumeAPIKey = fn
+	return s
+}
+
+func (s Service) autoResumeAfterCredit(ctx context.Context, userID string, entry ledger.Entry, balance ledger.Balance) {
+	if s.autoResumeAPIKey == nil || balance.AvailableUnits <= 0 {
+		return
+	}
+	balanceBeforeCredit := entry.BalanceAfterUnits - entry.DeltaUnits
+	if balanceBeforeCredit > 0 {
+		return
+	}
+	s.autoResumeAPIKey(ctx, userID, balance)
 }
 
 func (s Service) ListForUser(ctx context.Context, userID string, limit int, offset int) ([]Payment, error) {
@@ -393,7 +412,7 @@ func (s Service) attachExternalPayment(ctx context.Context, reference string, ex
 		          reviewed_by_admin_id::text, reviewed_at, created_at, updated_at, paid_at,
 		          external_payment_id, checkout_reference, qr_payload, qr_image_data_uri, qr_md5,
 		          expires_at, callback_received_at, provider_status, provider_transaction_id, provider_apv
-	`, ProviderBakongKHQR, external.ID, external.Status, external.QRPayload, nilIfEmpty(external.QRImageDataURI), nilIfEmpty(external.QRMD5), external.ExpiresAt, string(metadata), mapExternalStatus(external.Status), reference))
+	`, ProviderBakongKHQR, external.ID, external.Status, external.QRPayload, nilIfEmpty(external.QRImageDataURI), nilIfEmpty(external.QRMD5), nilIfZeroTime(external.ExpiresAt), string(metadata), mapExternalStatus(external.Status), reference))
 	if err != nil {
 		return Payment{}, mapPaymentScanErr(err)
 	}
@@ -465,6 +484,9 @@ func (s Service) ApplySLAIPayment(ctx context.Context, external slaipayment.Paym
 	})
 	if err != nil {
 		return ProviderPaymentResult{}, err
+	}
+	if result.Ledger != nil && result.Balance != nil {
+		s.autoResumeAfterCredit(ctx, result.Payment.UserID, *result.Ledger, *result.Balance)
 	}
 	return result, nil
 }
@@ -636,7 +658,7 @@ func (s Service) Approve(ctx context.Context, adminID, paymentID string, input A
 		if payment.Status == StatusPaid {
 			return ErrPaymentAlreadyPaid
 		}
-		if payment.Status != StatusPendingReview {
+		if payment.Status != StatusPendingReview && payment.Status != StatusNeedsReview {
 			return ErrInvalidPaymentState
 		}
 
@@ -725,6 +747,7 @@ func (s Service) Approve(ctx context.Context, adminID, paymentID string, input A
 	if err != nil {
 		return ApproveResult{}, err
 	}
+	s.autoResumeAfterCredit(ctx, result.Payment.UserID, result.Ledger, result.Balance)
 	return result, nil
 }
 
@@ -753,7 +776,7 @@ func (s Service) Reject(ctx context.Context, adminID, paymentID string, input Re
 		if locked.Status == StatusPaid {
 			return ErrPaymentAlreadyPaid
 		}
-		if locked.Status != StatusPendingReview && locked.Status != StatusPendingProof {
+		if locked.Status != StatusPendingReview && locked.Status != StatusPendingProof && locked.Status != StatusNeedsReview {
 			return ErrInvalidPaymentState
 		}
 
@@ -886,6 +909,7 @@ func (s Service) ManualTopUp(ctx context.Context, adminID string, input ManualTo
 	if err != nil {
 		return ManualTopUpResult{}, err
 	}
+	s.autoResumeAfterCredit(ctx, result.Payment.UserID, result.Ledger, result.Balance)
 
 	return result, nil
 }
@@ -1033,6 +1057,9 @@ func applyExternalPaymentInTx(ctx context.Context, tx pgx.Tx, payment Payment, e
 	}
 
 	localStatus := mapExternalStatus(external.Status)
+	if payment.Status == StatusPaid && localStatus != StatusPaid {
+		return payment, nil, nil, nil
+	}
 	if localStatus != StatusPaid {
 		updated, err := updatePaymentExternalState(ctx, tx, payment.ID, localStatus, external, fromCallback, nil)
 		return updated, nil, nil, err
@@ -1114,6 +1141,7 @@ func updatePaymentExternalState(ctx context.Context, tx pgx.Tx, paymentID string
 		callbackAt = &now
 	}
 	txID, apv := externalPaymentTransactionRefs(external)
+	expiresAt := nilIfZeroTime(external.ExpiresAt)
 	payment, err := scanPaymentDetail(tx.QueryRow(ctx, `
 		UPDATE payments
 		SET status = $2,
@@ -1137,7 +1165,7 @@ func updatePaymentExternalState(ctx context.Context, tx pgx.Tx, paymentID string
 		          reviewed_by_admin_id::text, reviewed_at, created_at, updated_at, paid_at,
 		          external_payment_id, checkout_reference, qr_payload, qr_image_data_uri, qr_md5,
 		          expires_at, callback_received_at, provider_status, provider_transaction_id, provider_apv
-	`, paymentID, status, external.ID, external.Status, string(metadata), callbackAt, txID, apv, external.ExpiresAt, paidAt, nilIfEmpty(external.QRPayload), nilIfEmpty(external.QRImageDataURI), nilIfEmpty(external.QRMD5)))
+	`, paymentID, status, external.ID, external.Status, string(metadata), callbackAt, txID, apv, expiresAt, paidAt, nilIfEmpty(external.QRPayload), nilIfEmpty(external.QRImageDataURI), nilIfEmpty(external.QRMD5)))
 	if err != nil {
 		return Payment{}, err
 	}
@@ -1149,6 +1177,13 @@ func externalPaymentTransactionRefs(external slaipayment.Payment) (*string, *str
 		return nil, nil
 	}
 	return nilIfEmpty(external.Telegram.TransactionID), nilIfEmpty(external.Telegram.APV)
+}
+
+func nilIfZeroTime(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	return &value
 }
 
 func scanPaymentDetail(row pgx.Row) (Payment, error) {
@@ -1332,8 +1367,12 @@ func adminPaymentWhere(filter AdminPaymentFilter) (string, []any) {
 	args := []any{}
 	clauses := []string{}
 	if filter.Status != "" {
-		args = append(args, filter.Status)
-		clauses = append(clauses, fmt.Sprintf("p.status = $%d", len(args)))
+		if filter.Status == "review_queue" {
+			clauses = append(clauses, "p.status IN ('pending_review', 'needs_review')")
+		} else {
+			args = append(args, filter.Status)
+			clauses = append(clauses, fmt.Sprintf("p.status = $%d", len(args)))
+		}
 	}
 	if filter.UserID != "" {
 		args = append(args, filter.UserID)

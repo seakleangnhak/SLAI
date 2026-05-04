@@ -20,8 +20,11 @@ WORKDIR /app
 
 COPY --from=builder /out/slai-api /app/slai-api
 COPY --from=builder /src/db/migrations /app/db/migrations
+COPY services/api/docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
 
 USER slai
 EXPOSE 8080
 
-CMD ["/app/slai-api", "serve"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
+CMD ["serve"]

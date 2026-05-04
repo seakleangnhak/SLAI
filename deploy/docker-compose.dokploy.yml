@@ -1,0 +1,87 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-slai}
+      POSTGRES_USER: ${POSTGRES_USER:-slai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ..
+      dockerfile: services/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      HTTP_ADDR: :8080
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      MIGRATIONS_DIR: /app/db/migrations
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
+      COOKIE_SECURE: "true"
+      SESSION_TTL: ${SESSION_TTL:-168h}
+      API_KEY_PEPPER: ${API_KEY_PEPPER:?set API_KEY_PEPPER}
+      API_KEY_PREFIX: ${API_KEY_PREFIX:-sk_slai}
+      ADMIN_SEED_EMAIL: ${ADMIN_SEED_EMAIL:-}
+      ADMIN_SEED_PASSWORD: ${ADMIN_SEED_PASSWORD:-}
+      SLAI_AUTO_MIGRATE: ${SLAI_AUTO_MIGRATE:-true}
+      SLAI_AUTO_SEED_ADMIN: ${SLAI_AUTO_SEED_ADMIN:-true}
+      SLAI_STARTUP_DB_RETRIES: ${SLAI_STARTUP_DB_RETRIES:-30}
+      SLAI_STARTUP_DB_RETRY_DELAY_SECONDS: ${SLAI_STARTUP_DB_RETRY_DELAY_SECONDS:-2}
+      READINESS_TIMEOUT: ${READINESS_TIMEOUT:-2s}
+      SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:-10s}
+      OMNIROUTE_ENABLED: ${OMNIROUTE_ENABLED:-true}
+      OMNIROUTE_BASE_URL: ${OMNIROUTE_BASE_URL:?set OMNIROUTE_BASE_URL}
+      OMNIROUTE_MANAGEMENT_TOKEN: ${OMNIROUTE_MANAGEMENT_TOKEN:?set OMNIROUTE_MANAGEMENT_TOKEN}
+      OMNIROUTE_USAGE_SYNC_MODE: ${OMNIROUTE_USAGE_SYNC_MODE:-call_logs}
+      OMNIROUTE_HTTP_TIMEOUT_SECONDS: ${OMNIROUTE_HTTP_TIMEOUT_SECONDS:-15}
+      OMNIROUTE_CALL_LOG_LIMIT: ${OMNIROUTE_CALL_LOG_LIMIT:-100}
+      USAGE_SYNC_WORKER_ENABLED: ${USAGE_SYNC_WORKER_ENABLED:-true}
+      USAGE_SYNC_INTERVAL_SECONDS: ${USAGE_SYNC_INTERVAL_SECONDS:-60}
+      USAGE_SYNC_LOCK_KEY: ${USAGE_SYNC_LOCK_KEY:-slai_usage_sync}
+      USAGE_SYNC_BATCH_LIMIT: ${USAGE_SYNC_BATCH_LIMIT:-}
+      USAGE_SYNC_START_DELAY_SECONDS: ${USAGE_SYNC_START_DELAY_SECONDS:-10}
+      STORAGE_DIR: /app/storage
+      PAYMENT_PROOF_MAX_MB: ${PAYMENT_PROOF_MAX_MB:-5}
+      PAYMENT_QR_MAX_MB: ${PAYMENT_QR_MAX_MB:-2}
+      SLAI_PAYMENT_ENABLED: ${SLAI_PAYMENT_ENABLED:-true}
+      SLAI_PAYMENT_BASE_URL: ${SLAI_PAYMENT_BASE_URL:?set SLAI_PAYMENT_BASE_URL}
+      SLAI_PAYMENT_API_KEY: ${SLAI_PAYMENT_API_KEY:-}
+      SLAI_PAYMENT_CALLBACK_BASE_URL: ${SLAI_PAYMENT_CALLBACK_BASE_URL:?set SLAI_PAYMENT_CALLBACK_BASE_URL}
+      SLAI_PAYMENT_CALLBACK_SECRET: ${SLAI_PAYMENT_CALLBACK_SECRET:?set SLAI_PAYMENT_CALLBACK_SECRET}
+      SLAI_PAYMENT_MERCHANT_PREFIX: ${SLAI_PAYMENT_MERCHANT_PREFIX:-SLAI}
+      SLAI_PAYMENT_DEFAULT_EXPIRY: ${SLAI_PAYMENT_DEFAULT_EXPIRY:-30m}
+      SLAI_PAYMENT_HTTP_TIMEOUT: ${SLAI_PAYMENT_HTTP_TIMEOUT:-10s}
+    volumes:
+      - storage_data:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz | grep OK"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://api:8080}
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  storage_data:
