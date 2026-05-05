@@ -97,13 +97,13 @@ function SummaryCard({ label, value, hint, children }: { label: string; value: s
 
 function InfoBanner() {
   return (
-    <Card className="rounded-2xl border-blue-200 bg-gradient-to-r from-blue-50 to-white p-4 shadow-sm">
+    <Card className="slai-usage-async-card rounded-2xl border-blue-200 bg-gradient-to-r from-blue-50 to-white p-4 shadow-sm">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex gap-3">
-          <span className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-full bg-blue-100 text-sm font-bold text-blue-700">i</span>
+          <span className="slai-usage-async-icon mt-0.5 grid size-9 shrink-0 place-items-center rounded-full bg-blue-100 text-sm font-bold text-blue-700">i</span>
           <div>
             <CardTitle>Async billing</CardTitle>
-            <CardDescription className="mt-1 text-blue-900/70">
+            <CardDescription className="slai-usage-async-copy mt-1 text-blue-900/70">
               Usage appears after provider logs are synced. Duplicate events are ignored and billed events create ledger debits.
             </CardDescription>
           </div>

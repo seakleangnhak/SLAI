@@ -71,14 +71,14 @@ function HeroMetricCard({
       className={cn(
         "relative min-h-44 overflow-hidden rounded-2xl p-5 shadow-sm transition hover:shadow-md",
         accent
-          ? "border-blue-200 bg-gradient-to-br from-white via-blue-50/70 to-cyan-50 shadow-blue-950/5"
+          ? "slai-overview-credit-card border-blue-200 bg-gradient-to-br from-white via-blue-50/70 to-cyan-50 shadow-blue-950/5"
           : "bg-white"
       )}
     >
       {accent ? (
         <>
-          <div className="absolute -right-14 -top-16 size-36 rounded-full bg-blue-200/60 blur-3xl" />
-          <div className="absolute bottom-0 left-0 h-1 w-full bg-gradient-to-r from-blue-600 via-cyan-500 to-transparent" />
+          <div className="slai-overview-credit-glow absolute -right-14 -top-16 size-36 rounded-full bg-blue-200/60 blur-3xl" />
+          <div className="slai-overview-credit-bar absolute bottom-0 left-0 h-1 w-full bg-gradient-to-r from-blue-600 via-cyan-500 to-transparent" />
         </>
       ) : null}
       <div className="relative flex h-full flex-col">
@@ -93,7 +93,7 @@ function HeroMetricCard({
 
 function StatPill({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white/75 px-3 py-2 shadow-sm">
+    <div className="slai-overview-credit-pill rounded-xl border border-slate-200 bg-white/75 px-3 py-2 shadow-sm">
       <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">{label}</p>
       <p className="mt-1 text-sm font-semibold text-slate-950">{value}</p>
     </div>
@@ -240,7 +240,7 @@ function RecentUsagePanel({ usage }: { usage: UsageEvent[] }) {
       <SectionHeader title="Recent usage" description="Latest synced usage events." href="/dashboard/usage" linkLabel="View all" />
 
       {hasUsage ? (
-        <div className="divide-y divide-slate-100">
+        <div className="slai-overview-activity-list">
           {usage.map((event) => (
             <div key={event.id} className="px-4 py-3.5 transition hover:bg-slate-50">
               <div className="flex items-start justify-between gap-3">
@@ -274,7 +274,7 @@ function RecentLedgerPanel({ ledger }: { ledger: LedgerEntry[] }) {
       <SectionHeader title="Recent ledger" description="Credits, debits, and balance changes." href="/dashboard/billing" linkLabel="View billing" />
 
       {hasLedger ? (
-        <div className="divide-y divide-slate-100">
+        <div className="slai-overview-activity-list">
           {ledger.map((entry) => {
             const isCredit = entry.deltaUnits >= 0;
             return (
