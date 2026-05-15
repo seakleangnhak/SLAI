@@ -190,6 +190,10 @@ func (s Service) syncCallLogs(ctx context.Context, state syncState, limit int) (
 			OccurredAt:      log.OccurredAt,
 			Raw:             log.Raw,
 		}
+		if log.CostUnits != nil {
+			costUnits := *log.CostUnits
+			input.CostUnitsOverride = &costUnits
+		}
 		ingested, err := s.IngestEvent(ctx, input)
 		if err != nil {
 			result.Failed++
@@ -215,16 +219,16 @@ func (s Service) syncUsageHistory(ctx context.Context, state syncState, limit in
 
 	result := SyncResult{Fetched: len(records)}
 	for _, record := range records {
+		costUnits := record.CostUnits
 		input := IngestInput{
-			ExternalSource:  ExternalSourceOmniRouteUsageHistory,
-			ExternalEventID: record.ExternalID,
-			OmniRouteKeyID:  nullableString(record.APIKeyID),
-			Model:           nullableString(record.Model),
-			Provider:        nullableString(record.Provider),
-			InputTokens:     record.InputTokens,
-			OutputTokens:    record.OutputTokens,
-			OccurredAt:      record.OccurredAt,
-			Raw:             record.Raw,
+			ExternalSource:    ExternalSourceOmniRouteUsageHistory,
+			ExternalEventID:   record.ExternalID,
+			OmniRouteKeyID:    nullableString(record.APIKeyID),
+			Model:             nullableString(record.Model),
+			Provider:          nullableString(record.Provider),
+			OccurredAt:        record.OccurredAt,
+			Raw:               record.Raw,
+			CostUnitsOverride: &costUnits,
 		}
 		ingested, err := s.IngestEvent(ctx, input)
 		if err != nil {

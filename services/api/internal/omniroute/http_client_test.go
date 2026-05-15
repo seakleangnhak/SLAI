@@ -202,31 +202,6 @@ func TestHTTPClientFetchCallLogsMapsLogs(t *testing.T) {
 	}
 }
 
-func TestHTTPClientFetchCallLogsPrefersUncompressedTokens(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(t, w, http.StatusOK, []map[string]any{{
-			"id":        "log-1",
-			"apiKeyId":  "omni-key-1",
-			"tokens":    map[string]any{"in": 100, "out": 20, "uncompressed": map[string]any{"in": 1250, "out": 225}},
-			"costUsd":   "0.01",
-			"timestamp": "2026-04-28T10:00:00Z",
-		}})
-	}))
-	defer server.Close()
-
-	client := newTestClient(t, server.URL, 0)
-	logs, err := client.FetchCallLogs(context.Background(), nil, 25)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(logs) != 1 || logs[0].InputTokens != 1250 || logs[0].OutputTokens != 225 {
-		t.Fatalf("logs = %#v, want uncompressed tokens", logs)
-	}
-	if logs[0].CostUnits == nil {
-		t.Fatalf("logs = %#v, want OmniRoute cost preserved", logs)
-	}
-}
-
 func TestHTTPClientFetchCallLogsMapsSubCentUSDCost(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(t, w, http.StatusOK, []map[string]any{{

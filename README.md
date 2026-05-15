@@ -436,12 +436,6 @@ output_cost = ceil(output_tokens / 1000) * output_cost_units_per_1k
 total_cost = input_cost + output_cost
 ```
 
-For OmniRoute call-log sync, SLAI prefers uncompressed token fields when
-OmniRoute exposes them, then falls back to the standard token fields. OmniRoute
-cost fields such as `costUsd` are kept in raw usage JSON for audit context, but
-SLAI credit debits are calculated from SLAI pricing rules and the billable token
-counts stored on the usage event.
-
 Zero tokens cost zero.
 There is no minimum charge yet.
 
