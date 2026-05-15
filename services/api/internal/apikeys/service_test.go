@@ -2,6 +2,7 @@ package apikeys_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -195,6 +196,79 @@ func TestOmniRouteCallsWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestRotateIgnoresMissingOmniRouteOldKey(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	user := createUser(t, "user@example.com", users.RoleUser)
+	mock := &mockOmniRoute{}
+	service := apikeys.NewService(testDB, apikeys.Config{Pepper: "pepper", Prefix: "sk_slai", OmniRouteEnabled: true}, mock, slog.Default())
+
+	created, err := service.CreateAPIKey(context.Background(), user.ID, "Default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.deleteErr = omniroute.ErrNotFound
+
+	rotated, err := service.RotateAPIKey(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rotated.APIKey.ID == created.APIKey.ID {
+		t.Fatal("rotation did not create a replacement key")
+	}
+	if mock.deleteCalls != 1 || mock.createCalls != 2 {
+		t.Fatalf("calls create=%d delete=%d", mock.createCalls, mock.deleteCalls)
+	}
+
+	var oldStatus, newStatus string
+	if err := testDB.QueryRow(context.Background(), `SELECT status FROM api_keys WHERE id = $1`, created.APIKey.ID).Scan(&oldStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := testDB.QueryRow(context.Background(), `SELECT status FROM api_keys WHERE id = $1`, rotated.APIKey.ID).Scan(&newStatus); err != nil {
+		t.Fatal(err)
+	}
+	if oldStatus != apikeys.StatusRevoked || newStatus != apikeys.StatusActive {
+		t.Fatalf("statuses old=%s new=%s", oldStatus, newStatus)
+	}
+}
+
+func TestRevokeIgnoresMissingOmniRouteKey(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	user := createUser(t, "user@example.com", users.RoleUser)
+	mock := &mockOmniRoute{deleteErr: omniroute.ErrNotFound}
+	service := apikeys.NewService(testDB, apikeys.Config{Pepper: "pepper", Prefix: "sk_slai", OmniRouteEnabled: true}, mock, slog.Default())
+
+	if _, err := service.CreateAPIKey(context.Background(), user.ID, "Default"); err != nil {
+		t.Fatal(err)
+	}
+	revoked, err := service.RevokeAPIKey(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revoked.Status != apikeys.StatusRevoked || revoked.RevokedAt == nil {
+		t.Fatalf("revoke result status=%s revoked_at=%v", revoked.Status, revoked.RevokedAt)
+	}
+	if mock.deleteCalls != 1 {
+		t.Fatalf("delete calls = %d", mock.deleteCalls)
+	}
+}
+
+func TestDeleteOmniRouteKeyStillReturnsUnexpectedError(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	user := createUser(t, "user@example.com", users.RoleUser)
+	mock := &mockOmniRoute{deleteErr: errors.New("omniroute unavailable")}
+	service := apikeys.NewService(testDB, apikeys.Config{Pepper: "pepper", Prefix: "sk_slai", OmniRouteEnabled: true}, mock, slog.Default())
+
+	if _, err := service.CreateAPIKey(context.Background(), user.ID, "Default"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.RevokeAPIKey(context.Background(), user.ID); err == nil || !strings.Contains(err.Error(), "omniroute unavailable") {
+		t.Fatalf("expected unexpected delete error, got %v", err)
+	}
+}
+
 func localService() apikeys.Service {
 	return apikeys.NewService(testDB, apikeys.Config{Pepper: "pepper", Prefix: "sk_slai", OmniRouteEnabled: false}, nil, slog.Default())
 }
@@ -268,6 +342,7 @@ type mockOmniRoute struct {
 	createCalls int
 	updateCalls int
 	deleteCalls int
+	deleteErr   error
 }
 
 func (m *mockOmniRoute) CreateAPIKey(_ context.Context, name string) (omniroute.APIKey, error) {
@@ -293,7 +368,7 @@ func (m *mockOmniRoute) DeleteAPIKey(_ context.Context, _ string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.deleteCalls++
-	return nil
+	return m.deleteErr
 }
 
 func (m *mockOmniRoute) ListAPIKeys(context.Context) ([]omniroute.APIKey, error) { return nil, nil }

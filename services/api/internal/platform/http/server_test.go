@@ -1138,6 +1138,62 @@ func TestAPIKeyGETDoesNotReturnRawKey(t *testing.T) {
 	}
 }
 
+func TestProvisionOmniRouteAPIKeyForExistingRawKey(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	client := newTestClientWithOmniRoute(t)
+	user := createUser(t, "user@example.com", users.RoleUser)
+	service := apikeys.NewService(testDB, apikeys.Config{Pepper: "test-api-key-pepper", Prefix: "sk_slai", OmniRouteEnabled: false}, nil, slog.Default())
+	created, err := service.CreateAPIKey(context.Background(), user.ID, "Legacy key")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	response := client.postWithHeaders(t, "/v1/internal/omniroute/api-keys/provision", map[string]any{
+		"raw_api_key": created.RawAPIKey,
+	}, nil, map[string]string{"Authorization": "Bearer omniroute-management-token"})
+	assertStatus(t, response, http.StatusOK)
+
+	omniRouteKeyID := stringField(t, response.JSON, "api_key.omniroute_key_id")
+	if omniRouteKeyID != "slai-"+created.APIKey.ID {
+		t.Fatalf("omniroute key id = %q", omniRouteKeyID)
+	}
+	if strings.Contains(response.Body, created.RawAPIKey) || strings.Contains(response.Body, "key_hash") {
+		t.Fatalf("provision response leaked secret fields: %s", response.Body)
+	}
+
+	var storedOmniRouteKeyID string
+	if err := testDB.QueryRow(context.Background(), `SELECT omniroute_key_id FROM api_keys WHERE id = $1`, created.APIKey.ID).Scan(&storedOmniRouteKeyID); err != nil {
+		t.Fatal(err)
+	}
+	if storedOmniRouteKeyID != omniRouteKeyID {
+		t.Fatalf("stored omniroute key id = %q", storedOmniRouteKeyID)
+	}
+}
+
+func TestProvisionOmniRouteAPIKeyRejectsInvalidRawKey(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	client := newTestClientWithOmniRoute(t)
+
+	response := client.postWithHeaders(t, "/v1/internal/omniroute/api-keys/provision", map[string]any{
+		"raw_api_key": "sk_slai_missing",
+	}, nil, map[string]string{"Authorization": "Bearer omniroute-management-token"})
+	assertStatus(t, response, http.StatusNotFound)
+}
+
+func TestProvisionOmniRouteAPIKeyRequiresManagementToken(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	client := newTestClientWithOmniRoute(t)
+
+	missing := client.post(t, "/v1/internal/omniroute/api-keys/provision", map[string]any{"raw_api_key": "sk_slai_missing"}, nil)
+	assertStatus(t, missing, http.StatusUnauthorized)
+
+	wrong := client.postWithHeaders(t, "/v1/internal/omniroute/api-keys/provision", map[string]any{"raw_api_key": "sk_slai_missing"}, nil, map[string]string{"Authorization": "Bearer wrong"})
+	assertStatus(t, wrong, http.StatusForbidden)
+}
+
 func TestMockUsageEndpointAndUsageListDoNotExposeRawKey(t *testing.T) {
 	requireDB(t)
 	truncateTables(t)
@@ -1372,6 +1428,42 @@ func newTestClient(t *testing.T) testClient {
 			Enabled:       false,
 			UsageSyncMode: "call_logs",
 			CallLogLimit:  100,
+		},
+		UsageSyncWorker: config.UsageSyncWorkerConfig{
+			Enabled:    false,
+			Interval:   60 * time.Second,
+			LockKey:    "slai_usage_sync",
+			BatchLimit: 100,
+			StartDelay: 10 * time.Second,
+		},
+		Storage: config.StorageConfig{
+			Dir:               t.TempDir(),
+			PaymentProofMaxMB: 5,
+			PaymentQRMaxMB:    2,
+		},
+	}, testDB, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	return testClient{
+		server: httptest.NewServer(server),
+		client: &http.Client{},
+	}
+}
+
+func newTestClientWithOmniRoute(t *testing.T) testClient {
+	t.Helper()
+	server := httpserver.NewServer(httpserver.ServerConfig{
+		Addr:             ":0",
+		ReadinessTimeout: time.Second,
+		SessionSecret:    "test-secret",
+		CookieSecure:     false,
+		SessionTTL:       time.Hour,
+		APIKeyPepper:     "test-api-key-pepper",
+		APIKeyPrefix:     "sk_slai",
+		OmniRoute: config.OmniRouteConfig{
+			Enabled:         true,
+			ManagementToken: "omniroute-management-token",
+			UsageSyncMode:   "call_logs",
+			CallLogLimit:    100,
 		},
 		UsageSyncWorker: config.UsageSyncWorkerConfig{
 			Enabled:    false,

@@ -176,6 +176,7 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 	mux.HandleFunc("POST /v1/admin/payments/manual-topup", server.adminManualTopUp)
 	mux.HandleFunc("POST /v1/admin/ledger/adjustments", server.adminLedgerAdjustment)
 	mux.HandleFunc("POST /v1/internal/usage/mock-event", server.ingestMockUsageEvent)
+	mux.HandleFunc("POST /v1/internal/omniroute/api-keys/provision", server.provisionOmniRouteAPIKey)
 	mux.HandleFunc("POST /v1/admin/usage/sync", server.adminSyncUsage)
 	mux.HandleFunc("GET /v1/admin/usage/sync-status", server.adminUsageSyncStatus)
 	mux.HandleFunc("GET /v1/admin/usage", server.adminListUsage)
@@ -877,6 +878,24 @@ func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"api_key": key.Public(s.apiKeyService.LocalDevMode())})
 }
 
+func (s *Server) provisionOmniRouteAPIKey(w http.ResponseWriter, r *http.Request) {
+	if !s.requireOmniRouteManagementToken(w, r) {
+		return
+	}
+	var req struct {
+		RawAPIKey string `json:"raw_api_key"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	key, err := s.apiKeyService.ProvisionOmniRouteKeyForRawKey(r.Context(), req.RawAPIKey)
+	if err != nil {
+		writeProvisionOmniRouteAPIKeyError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"api_key": key})
+}
+
 func (s *Server) adminListPackages(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireAdmin(w, r); !ok {
 		return
@@ -1194,6 +1213,32 @@ func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) (users.Use
 	return user, true
 }
 
+func (s *Server) requireOmniRouteManagementToken(w http.ResponseWriter, r *http.Request) bool {
+	configured := strings.TrimSpace(s.omniRouteCfg.ManagementToken)
+	if !s.omniRouteCfg.Enabled || configured == "" {
+		writeError(w, http.StatusNotImplemented, "omniroute_integration_disabled", omniroute.ErrNotImplemented)
+		return false
+	}
+	provided := bearerToken(r.Header.Get("Authorization"))
+	if provided == "" {
+		writeError(w, http.StatusUnauthorized, "unauthenticated", nil)
+		return false
+	}
+	if subtle.ConstantTimeCompare([]byte(provided), []byte(configured)) != 1 {
+		writeError(w, http.StatusForbidden, "forbidden", nil)
+		return false
+	}
+	return true
+}
+
+func bearerToken(header string) string {
+	header = strings.TrimSpace(header)
+	if len(header) < len("Bearer ") || !strings.EqualFold(header[:len("Bearer ")], "Bearer ") {
+		return ""
+	}
+	return strings.TrimSpace(header[len("Bearer "):])
+}
+
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	decoder := json.NewDecoder(r.Body)
@@ -1229,6 +1274,17 @@ func writeAPIKeyError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_api_key_name", err)
 	case errors.Is(err, apikeys.ErrInsufficientBalance):
 		writeError(w, http.StatusBadRequest, "insufficient_balance", err)
+	default:
+		writeError(w, http.StatusInternalServerError, "api_key_failed", err)
+	}
+}
+
+func writeProvisionOmniRouteAPIKeyError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, apikeys.ErrNotFound):
+		writeError(w, http.StatusNotFound, "api_key_not_found", err)
+	case errors.Is(err, omniroute.ErrNotImplemented):
+		writeError(w, http.StatusNotImplemented, "omniroute_integration_disabled", err)
 	default:
 		writeError(w, http.StatusInternalServerError, "api_key_failed", err)
 	}

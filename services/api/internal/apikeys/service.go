@@ -13,6 +13,7 @@ import (
 	"github.com/slai/slai/services/api/internal/ledger"
 	"github.com/slai/slai/services/api/internal/omniroute"
 	platformdb "github.com/slai/slai/services/api/internal/platform/db"
+	"github.com/slai/slai/services/api/internal/users"
 )
 
 var (
@@ -60,6 +61,50 @@ func (s Service) GetCurrentAPIKey(ctx context.Context, userID string) (APIKey, e
 
 func (s Service) GetLatestAPIKey(ctx context.Context, userID string) (APIKey, error) {
 	return getLatestAPIKey(ctx, s.pool, userID)
+}
+
+func (s Service) ProvisionOmniRouteKeyForRawKey(ctx context.Context, rawKey string) (OmniRouteProvisionedAPIKey, error) {
+	rawKey = strings.TrimSpace(rawKey)
+	if rawKey == "" {
+		return OmniRouteProvisionedAPIKey{}, ErrNotFound
+	}
+	if !s.cfg.OmniRouteEnabled {
+		return OmniRouteProvisionedAPIKey{}, omniroute.ErrNotImplemented
+	}
+
+	var result OmniRouteProvisionedAPIKey
+	err := platformdb.InTx(ctx, s.pool, func(tx pgx.Tx) error {
+		key, email, err := getActiveKeyByHash(ctx, tx, HashRawKey(rawKey, s.cfg.Pepper))
+		if err != nil {
+			return err
+		}
+
+		omniRouteKeyID := deterministicOmniRouteKeyID(key.ID)
+		updated, err := setOmniRouteKeyIDReturning(ctx, tx, key.ID, omniRouteKeyID)
+		if err != nil {
+			return err
+		}
+
+		result = OmniRouteProvisionedAPIKey{
+			SLAIAPIKeyID:   updated.ID,
+			OmniRouteKeyID: omniRouteKeyID,
+			Name:           updated.Name,
+			UserID:         updated.UserID,
+			UserEmail:      email,
+			NoLog:          false,
+		}
+		return nil
+	})
+	if err != nil {
+		return OmniRouteProvisionedAPIKey{}, err
+	}
+
+	s.logger.Info("omniroute api key provisioned for existing slai key", "user_id", result.UserID, "key_id", result.SLAIAPIKeyID, "omniroute_key_id", result.OmniRouteKeyID)
+	return result, nil
+}
+
+func deterministicOmniRouteKeyID(slaiAPIKeyID string) string {
+	return "slai-" + slaiAPIKeyID
 }
 
 func (s Service) CreateAPIKey(ctx context.Context, userID, name string) (CreatedAPIKey, error) {
@@ -290,6 +335,10 @@ func (s Service) deleteOmniRouteKey(ctx context.Context, key APIKey) error {
 		return errors.New("omniroute client is required when OMNIROUTE_ENABLED=true")
 	}
 	if err := s.omniRoute.DeleteAPIKey(ctx, *key.OmniRouteKeyID); err != nil {
+		if errors.Is(err, omniroute.ErrNotFound) {
+			s.logger.Warn("omniroute api key already missing during delete", "api_key_id", key.ID, "omniroute_key_id", *key.OmniRouteKeyID)
+			return nil
+		}
 		return fmt.Errorf("delete omniroute api key: %w", err)
 	}
 	return nil
@@ -349,12 +398,54 @@ func getLatestAPIKey(ctx context.Context, db platformdb.Executor, userID string)
 	`, userID))
 }
 
+func getActiveKeyByHash(ctx context.Context, tx pgx.Tx, keyHash string) (APIKey, string, error) {
+	var key APIKey
+	var email string
+	err := tx.QueryRow(ctx, `
+		SELECT ak.id::text, ak.user_id::text, ak.omniroute_key_id, ak.key_hash, ak.key_prefix, ak.name, ak.status,
+		       ak.last_used_at, ak.revoked_at, ak.created_at, ak.updated_at, u.email
+		FROM api_keys ak
+		JOIN users u ON u.id = ak.user_id
+		WHERE ak.key_hash = $1 AND ak.status = $2 AND u.status = $3
+		FOR UPDATE OF ak
+	`, keyHash, StatusActive, users.StatusActive).Scan(
+		&key.ID,
+		&key.UserID,
+		&key.OmniRouteKeyID,
+		&key.KeyHash,
+		&key.KeyPrefix,
+		&key.Name,
+		&key.Status,
+		&key.LastUsedAt,
+		&key.RevokedAt,
+		&key.CreatedAt,
+		&key.UpdatedAt,
+		&email,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return APIKey{}, "", ErrNotFound
+	}
+	if err != nil {
+		return APIKey{}, "", fmt.Errorf("get active api key by hash: %w", err)
+	}
+	return key, email, nil
+}
+
 func insertAPIKey(ctx context.Context, tx pgx.Tx, key APIKey) (APIKey, error) {
 	return scanAPIKey(tx.QueryRow(ctx, `
 		INSERT INTO api_keys (user_id, omniroute_key_id, key_hash, key_prefix, name, status)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id::text, user_id::text, omniroute_key_id, key_hash, key_prefix, name, status, last_used_at, revoked_at, created_at, updated_at
 	`, key.UserID, key.OmniRouteKeyID, key.KeyHash, key.KeyPrefix, key.Name, key.Status))
+}
+
+func setOmniRouteKeyIDReturning(ctx context.Context, tx pgx.Tx, keyID, omniRouteKeyID string) (APIKey, error) {
+	return scanAPIKey(tx.QueryRow(ctx, `
+		UPDATE api_keys
+		SET omniroute_key_id = $2
+		WHERE id = $1
+		RETURNING id::text, user_id::text, omniroute_key_id, key_hash, key_prefix, name, status, last_used_at, revoked_at, created_at, updated_at
+	`, keyID, omniRouteKeyID))
 }
 
 func markKeyRevoked(ctx context.Context, tx pgx.Tx, keyID string) error {

@@ -49,6 +49,15 @@ type CreatedAPIKey struct {
 	RawAPIKey string       `json:"raw_api_key"`
 }
 
+type OmniRouteProvisionedAPIKey struct {
+	SLAIAPIKeyID   string `json:"slai_api_key_id"`
+	OmniRouteKeyID string `json:"omniroute_key_id"`
+	Name           string `json:"name"`
+	UserID         string `json:"user_id"`
+	UserEmail      string `json:"user_email"`
+	NoLog          bool   `json:"no_log"`
+}
+
 func (k APIKey) Public(localDevMode bool) PublicAPIKey {
 	return PublicAPIKey{
 		ID:              k.ID,
