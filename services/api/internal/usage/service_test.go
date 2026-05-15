@@ -212,6 +212,66 @@ func TestIngestOmniRouteCostOverrideDeductsProvidedCredits(t *testing.T) {
 	assertUsageLedger(t, result.Event.ID, -override)
 }
 
+func TestSyncCallLogsBillsFromUncompressedTokensInsteadOfOmniRouteCost(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	user := createUser(t, "uncompressed-sync@example.com", users.RoleUser)
+	key := createLocalAPIKey(t, user.ID)
+	creditUser(t, user.ID, 100)
+	omniRouteKeyID := "omni_uncompressed_1"
+	if _, err := testDB.Exec(context.Background(), `UPDATE api_keys SET omniroute_key_id = $2 WHERE id = $1`, key.APIKey.ID, omniRouteKeyID); err != nil {
+		t.Fatal(err)
+	}
+	svc := usage.NewService(testDB, &mockOmniRoute{callLogs: []omniroute.CallLog{{
+		ExternalID:   "omni-uncompressed-001",
+		APIKeyID:     omniRouteKeyID,
+		InputTokens:  7240,
+		OutputTokens: 357,
+		CostUnits:    int64Ptr(storedDecimal(t, "0.002")),
+		OccurredAt:   time.Now().UTC(),
+		Raw:          map[string]any{"costUsd": "0.002"},
+	}}}, config.OmniRouteConfig{Enabled: true, UsageSyncMode: "call_logs", CallLogLimit: 100}, testLogger())
+
+	result, err := svc.SyncOmniRoute(context.Background(), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCost := storedDecimal(t, "7.597")
+	if result.Billed != 1 || result.Fetched != 1 {
+		t.Fatalf("sync result = %#v", result)
+	}
+	assertBalanceAndLifetimeUsed(t, user.ID, storedDecimal(t, "92.403"), wantCost)
+	var event usage.Event
+	if err := testDB.QueryRow(context.Background(), `
+		SELECT id::text, user_id::text, api_key_id::text, external_source, external_event_id,
+		       omniroute_key_id, model, provider, input_tokens, output_tokens, total_tokens,
+		       cost_units, status, occurred_at, raw_json, created_at
+		FROM usage_events WHERE external_event_id = $1
+	`, "omni-uncompressed-001").Scan(
+		&event.ID,
+		&event.UserID,
+		&event.APIKeyID,
+		&event.ExternalSource,
+		&event.ExternalEventID,
+		&event.OmniRouteKeyID,
+		&event.Model,
+		&event.Provider,
+		&event.InputTokens,
+		&event.OutputTokens,
+		&event.TotalTokens,
+		&event.CostUnits,
+		&event.Status,
+		&event.OccurredAt,
+		&event.RawJSON,
+		&event.CreatedAt,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if event.CostUnits != wantCost || event.InputTokens != 7240 || event.OutputTokens != 357 {
+		t.Fatalf("event = %#v, want SLAI cost from uncompressed tokens", event)
+	}
+}
+
 func TestUsageCanMakeBalanceNegativeAndSuspendsKey(t *testing.T) {
 	requireDB(t)
 	truncateTables(t)
@@ -456,6 +516,10 @@ func storedDecimal(t *testing.T, value string) int64 {
 	return units
 }
 
+func int64Ptr(value int64) *int64 {
+	return &value
+}
+
 func assertBalanceAndLifetimeUsed(t *testing.T, userID string, available int64, lifetimeUsed int64) {
 	t.Helper()
 	var actualAvailable, actualLifetimeUsed int64
@@ -529,6 +593,7 @@ type mockOmniRoute struct {
 	mu          sync.Mutex
 	createCalls int
 	updateCalls int
+	callLogs    []omniroute.CallLog
 }
 
 func (m *mockOmniRoute) CreateAPIKey(_ context.Context, name string) (omniroute.APIKey, error) {
@@ -553,7 +618,11 @@ func (m *mockOmniRoute) UpdateAPIKey(context.Context, string, omniroute.UpdateAP
 func (m *mockOmniRoute) DeleteAPIKey(context.Context, string) error              { return nil }
 func (m *mockOmniRoute) ListAPIKeys(context.Context) ([]omniroute.APIKey, error) { return nil, nil }
 func (m *mockOmniRoute) FetchCallLogs(context.Context, *time.Time, int) ([]omniroute.CallLog, error) {
-	return nil, nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	logs := make([]omniroute.CallLog, len(m.callLogs))
+	copy(logs, m.callLogs)
+	return logs, nil
 }
 func (m *mockOmniRoute) FetchUsageHistory(context.Context, *time.Time, int) ([]omniroute.UsageRecord, error) {
 	return nil, nil
@@ -597,7 +666,8 @@ func (f *fakeOmniRouteServer) handle(w http.ResponseWriter, r *http.Request) {
 			"apiKeyId":  "omni-key-1",
 			"model":     "gpt-5.5",
 			"provider":  "openai",
-			"tokens":    map[string]any{"in": 1001, "out": 0},
+			"tokens":    map[string]any{"in": 100, "out": 0, "uncompressed": map[string]any{"in": 1001, "out": 0}},
+			"costUsd":   "0.001",
 			"timestamp": "2026-04-28T10:00:00Z",
 		}})
 	case r.Method == http.MethodPatch && r.URL.Path == "/api/keys/omni-key-1":

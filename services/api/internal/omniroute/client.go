@@ -47,10 +47,12 @@ type UpdateAPIKeyPayload struct {
 }
 
 type CallLog struct {
-	ExternalID   string
-	APIKeyID     string
-	Model        string
-	Provider     string
+	ExternalID string
+	APIKeyID   string
+	Model      string
+	Provider   string
+	// InputTokens and OutputTokens are SLAI billable token counts. When OmniRoute
+	// exposes both compressed and uncompressed counts, these prefer uncompressed.
 	InputTokens  int64
 	OutputTokens int64
 	CostUnits    *int64
@@ -59,13 +61,15 @@ type CallLog struct {
 }
 
 type UsageRecord struct {
-	ExternalID string
-	APIKeyID   string
-	Model      string
-	Provider   string
-	CostUnits  int64
-	OccurredAt time.Time
-	Raw        map[string]any
+	ExternalID   string
+	APIKeyID     string
+	Model        string
+	Provider     string
+	InputTokens  int64
+	OutputTokens int64
+	CostUnits    int64
+	OccurredAt   time.Time
+	Raw          map[string]any
 }
 
 type StubClient struct {

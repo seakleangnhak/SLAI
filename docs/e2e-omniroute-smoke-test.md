@@ -167,12 +167,11 @@ The automated smoke test checks:
 - `POST /v1/admin/usage/sync` succeeds.
 - User usage, admin usage, user balance, user ledger, and user payments show the
   expected records after sync.
-- If OmniRoute call logs include `costUnits`, `cost_units`, or a USD cost field
-  such as `costUsd`, SLAI bills from that value. One OmniRoute USD maps to one
-  displayed SLAI credit. Internally, 1 displayed credit is 1,000,000 stored
-  units, so a `costUsd` value of `0.001` becomes `0.001` displayed credits
-  or 1,000 stored units. If no cost is present, SLAI falls back to token-based
-  pricing rules.
+- SLAI bills synced call logs from token-based pricing rules. If OmniRoute
+  exposes uncompressed token fields, those are used for SLAI billing and stored
+  usage totals; compressed token counts remain OmniRoute-side only. OmniRoute
+  `costUnits`, `cost_units`, or USD fields such as `costUsd` are preserved in
+  raw usage JSON but no longer drive SLAI call-log billing.
 - Re-running sync does not change balance unless another worker/log processed new
   events concurrently.
 - Optional exhaustion path suspends the key when balance reaches zero or below.
