@@ -7,9 +7,12 @@ import { cn } from "@/lib/cn";
 const STORAGE_KEY = "slai-theme";
 type Theme = "light" | "dark";
 
-function applyTheme(theme: Theme) {
+function applyTheme(theme: Theme, persist = true) {
   document.documentElement.classList.toggle("dark", theme === "dark");
   document.documentElement.style.colorScheme = theme;
+  if (!persist) {
+    return;
+  }
   try {
     window.localStorage.setItem(STORAGE_KEY, theme);
   } catch {
@@ -22,19 +25,31 @@ function readTheme(): Theme {
     return "light";
   }
   try {
-    return window.localStorage.getItem(STORAGE_KEY) === "dark" ? "dark" : "light";
+    const storedTheme = window.localStorage.getItem(STORAGE_KEY);
+    if (storedTheme === "dark" || storedTheme === "light") {
+      return storedTheme;
+    }
   } catch {
-    return "light";
+    // Theme persistence is optional; fall back to the system preference below.
   }
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
 }
 
-export function ThemeToggle({ compact = false, className }: { compact?: boolean; className?: string }) {
+export function ThemeToggle({
+  compact = false,
+  className,
+}: {
+  compact?: boolean;
+  className?: string;
+}) {
   const [theme, setTheme] = useState<Theme>("light");
 
   useEffect(() => {
     const savedTheme = readTheme();
     setTheme(savedTheme);
-    applyTheme(savedTheme);
+    applyTheme(savedTheme, false);
   }, []);
 
   function toggleTheme() {
@@ -52,20 +67,31 @@ export function ThemeToggle({ compact = false, className }: { compact?: boolean;
       className={cn(
         "inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100 hover:text-slate-950 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-slate-100",
         compact && "size-9 px-0",
-        className
+        className,
       )}
       type="button"
       onClick={toggleTheme}
     >
       {theme === "dark" ? <SunIcon /> : <MoonIcon />}
-      <span className={compact ? "sr-only" : undefined}>{theme === "dark" ? "Light" : "Dark"}</span>
+      <span className={compact ? "sr-only" : undefined}>
+        {theme === "dark" ? "Light" : "Dark"}
+      </span>
     </button>
   );
 }
 
 function MoonIcon() {
   return (
-    <svg aria-hidden="true" className="size-4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24">
+    <svg
+      aria-hidden="true"
+      className="size-4"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.8"
+      viewBox="0 0 24 24"
+    >
       <path d="M21 12.8A8.5 8.5 0 0 1 11.2 3a7 7 0 1 0 9.8 9.8Z" />
     </svg>
   );
@@ -73,7 +99,16 @@ function MoonIcon() {
 
 function SunIcon() {
   return (
-    <svg aria-hidden="true" className="size-4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24">
+    <svg
+      aria-hidden="true"
+      className="size-4"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.8"
+      viewBox="0 0 24 24"
+    >
       <path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z" />
       <path d="M12 2v2" />
       <path d="M12 20v2" />

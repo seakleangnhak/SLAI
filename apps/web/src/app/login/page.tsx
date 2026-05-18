@@ -4,7 +4,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 
-import { AuthCard, AuthErrorAlert, AuthInput, AuthPageShell, AuthPasswordInput, SecurityNote } from "@/components/AuthPage";
+import {
+  AuthCard,
+  AuthErrorAlert,
+  AuthInput,
+  AuthPageShell,
+  AuthPasswordInput,
+  SecurityNote,
+} from "@/components/AuthPage";
 import { Button } from "@/components/Button";
 import { api, readableError } from "@/lib/api";
 
@@ -58,11 +65,41 @@ export default function LoginPage() {
         footer={
           <>
             <p>
-              No account yet? <Link className="font-semibold text-blue-700 hover:text-blue-800" href="/signup">Create one</Link>
+              No account yet?{" "}
+              <Link
+                className="font-semibold text-blue-700 hover:text-blue-800"
+                href="/signup"
+              >
+                Create one
+              </Link>
             </p>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-              <Link className="font-semibold text-slate-700 hover:text-slate-950" href="/">Back to home</Link>
-              <Link className="font-semibold text-slate-500 hover:text-slate-950" href="/admin/login">Admin console</Link>
+              <Link
+                className="font-semibold text-slate-700 hover:text-slate-950"
+                href="/"
+              >
+                Back to home
+              </Link>
+              <div className="flex flex-wrap gap-3">
+                <Link
+                  className="font-semibold text-slate-500 hover:text-slate-950"
+                  href="/terms"
+                >
+                  Terms
+                </Link>
+                <Link
+                  className="font-semibold text-slate-500 hover:text-slate-950"
+                  href="/privacy"
+                >
+                  Privacy
+                </Link>
+                <Link
+                  className="font-semibold text-slate-500 hover:text-slate-950"
+                  href="/admin/login"
+                >
+                  Admin console
+                </Link>
+              </div>
             </div>
           </>
         }
@@ -89,12 +126,19 @@ export default function LoginPage() {
             label="Password"
             onChange={(event) => {
               setPassword(event.target.value);
-              setFieldErrors((current) => ({ ...current, password: undefined }));
+              setFieldErrors((current) => ({
+                ...current,
+                password: undefined,
+              }));
             }}
             placeholder="Enter your password"
             value={password}
           />
-          <Button className="h-12 w-full rounded-xl bg-slate-950 text-base shadow-sm hover:bg-slate-800" type="submit" disabled={loading}>
+          <Button
+            className="h-12 w-full rounded-xl bg-slate-950 text-base shadow-sm hover:bg-slate-800"
+            type="submit"
+            disabled={loading}
+          >
             {loading ? "Signing in..." : "Continue"}
           </Button>
         </form>

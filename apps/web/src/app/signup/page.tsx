@@ -4,7 +4,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
-import { AuthCard, AuthErrorAlert, AuthInput, AuthPageShell, AuthPasswordInput, SecurityNote } from "@/components/AuthPage";
+import {
+  AuthCard,
+  AuthErrorAlert,
+  AuthInput,
+  AuthPageShell,
+  AuthPasswordInput,
+  SecurityNote,
+} from "@/components/AuthPage";
 import { Button } from "@/components/Button";
 import { api, readableError } from "@/lib/api";
 
@@ -50,10 +57,21 @@ export default function SignupPage() {
         footer={
           <>
             <p>
-              Already have an account? <Link className="font-semibold text-blue-700 hover:text-blue-800" href="/login">Sign in</Link>
+              Already have an account?{" "}
+              <Link
+                className="font-semibold text-blue-700 hover:text-blue-800"
+                href="/login"
+              >
+                Sign in
+              </Link>
             </p>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-              <Link className="font-semibold text-slate-700 hover:text-slate-950" href="/">Back to home</Link>
+              <Link
+                className="font-semibold text-slate-700 hover:text-slate-950"
+                href="/"
+              >
+                Back to home
+              </Link>
             </div>
           </>
         }
@@ -81,14 +99,38 @@ export default function SignupPage() {
             minLength={8}
             onChange={(event) => {
               setPassword(event.target.value);
-              setFieldErrors((current) => ({ ...current, password: undefined }));
+              setFieldErrors((current) => ({
+                ...current,
+                password: undefined,
+              }));
             }}
             placeholder="Enter your password"
             value={password}
           />
-          <Button className="h-12 w-full rounded-xl bg-slate-950 text-base shadow-sm hover:bg-slate-800" type="submit" disabled={loading}>
+          <Button
+            className="h-12 w-full rounded-xl bg-slate-950 text-base shadow-sm hover:bg-slate-800"
+            type="submit"
+            disabled={loading}
+          >
             {loading ? "Creating account..." : "Create account"}
           </Button>
+          <p className="text-xs leading-5 text-slate-500">
+            By creating an account, you agree to the{" "}
+            <Link
+              className="font-semibold text-blue-700 hover:text-blue-800"
+              href="/terms"
+            >
+              Terms
+            </Link>{" "}
+            and acknowledge the{" "}
+            <Link
+              className="font-semibold text-blue-700 hover:text-blue-800"
+              href="/privacy"
+            >
+              Privacy Policy
+            </Link>
+            .
+          </p>
         </form>
         <SecurityNote />
       </AuthCard>

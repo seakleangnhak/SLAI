@@ -18,15 +18,23 @@ type AppShellProps = {
   logoutRedirect?: string;
 };
 
-type DashboardNavIconName = "overview" | "key" | "usage" | "billing" | "settings" | "admin";
+type DashboardNavIconName =
+  | "overview"
+  | "key"
+  | "docs"
+  | "usage"
+  | "billing"
+  | "settings"
+  | "admin";
 
 const navItems = {
   dashboard: [
     { href: "/dashboard", label: "Overview", icon: "overview" },
     { href: "/dashboard/api-key", label: "API key", icon: "key" },
+    { href: "/dashboard/docs", label: "Docs", icon: "docs" },
     { href: "/dashboard/usage", label: "Usage", icon: "usage" },
     { href: "/dashboard/billing", label: "Billing", icon: "billing" },
-    { href: "/dashboard/settings", label: "Settings", icon: "settings" }
+    { href: "/dashboard/settings", label: "Settings", icon: "settings" },
   ],
   admin: [
     { href: "/admin", label: "Overview" },
@@ -34,23 +42,30 @@ const navItems = {
     { href: "/admin/packages", label: "Packages" },
     { href: "/admin/usage", label: "Usage" },
     { href: "/admin/sync", label: "Sync" },
-    { href: "/admin/audit", label: "Audit Logs" }
+    { href: "/admin/audit", label: "Audit Logs" },
   ],
   public: [
     { href: "/packages", label: "Packages" },
     { href: "/#how-it-works", label: "How it works" },
-    { href: "/dashboard", label: "Dashboard" }
-  ]
+    { href: "/dashboard", label: "Dashboard" },
+  ],
 };
 
-export function AppShell({ children, section = "public", user, logoutRedirect }: AppShellProps) {
+export function AppShell({
+  children,
+  section = "public",
+  user,
+  logoutRedirect,
+}: AppShellProps) {
   const pathname = usePathname();
   const router = useRouter();
   const items = navItems[section];
 
   async function logout() {
     await api.auth.logout();
-    router.push(logoutRedirect ?? (section === "admin" ? "/admin/login" : "/login"));
+    router.push(
+      logoutRedirect ?? (section === "admin" ? "/admin/login" : "/login"),
+    );
     router.refresh();
   }
 
@@ -63,14 +78,20 @@ export function AppShell({ children, section = "public", user, logoutRedirect }:
   }
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] text-slate-950">
-      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/85 backdrop-blur-md">
+    <div className="min-h-screen bg-[#f8fafc] text-slate-950 dark:bg-slate-950 dark:text-slate-100">
+      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/85 backdrop-blur-md dark:border-slate-800 dark:bg-slate-950/85">
         <div className="mx-auto flex min-h-16 max-w-7xl flex-col gap-3 px-4 py-3 sm:px-6 md:flex-row md:items-center md:justify-between lg:px-8">
           <Link href="/" className="flex items-center gap-3">
-            <span className="grid size-9 place-items-center rounded-xl bg-slate-950 text-sm font-bold text-white shadow-sm">S</span>
+            <span className="grid size-9 place-items-center rounded-xl bg-slate-950 text-sm font-bold text-white shadow-sm">
+              S
+            </span>
             <span>
-              <span className="block text-sm font-semibold text-slate-950">SLAI</span>
-              <span className="block text-xs text-slate-500">Prepaid AI credits</span>
+              <span className="block text-sm font-semibold text-slate-950 dark:text-slate-100">
+                SLAI
+              </span>
+              <span className="block text-xs text-slate-500 dark:text-slate-400">
+                Prepaid AI credits
+              </span>
             </span>
           </Link>
           <nav className="flex flex-wrap items-center gap-1">
@@ -79,8 +100,9 @@ export function AppShell({ children, section = "public", user, logoutRedirect }:
                 href={item.href}
                 key={item.label}
                 className={cn(
-                  "rounded-md px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950",
-                  pathname === item.href && "bg-slate-100 text-slate-950"
+                  "rounded-md px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100",
+                  pathname === item.href &&
+                    "bg-slate-100 text-slate-950 dark:bg-slate-800 dark:text-slate-100",
                 )}
               >
                 {item.label}
@@ -88,10 +110,11 @@ export function AppShell({ children, section = "public", user, logoutRedirect }:
             ))}
           </nav>
           <div className="flex items-center gap-3">
+            <ThemeToggle compact />
             {user ? (
               <>
-                <div className="hidden items-center gap-2 text-sm text-slate-600 sm:flex">
-                  <span className="grid size-7 place-items-center rounded-md bg-slate-100 font-semibold text-slate-800">
+                <div className="hidden items-center gap-2 text-sm text-slate-600 sm:flex dark:text-slate-300">
+                  <span className="grid size-7 place-items-center rounded-md bg-slate-100 font-semibold text-slate-800 dark:bg-slate-800 dark:text-slate-100">
                     {userInitial(user)}
                   </span>
                   <span className="max-w-48 truncate">{user.email}</span>
@@ -102,10 +125,16 @@ export function AppShell({ children, section = "public", user, logoutRedirect }:
               </>
             ) : (
               <>
-                <Link className="rounded-md px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 hover:text-slate-950" href="/login">
+                <Link
+                  className="rounded-md px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-white"
+                  href="/login"
+                >
                   Sign in
                 </Link>
-                <Link className="rounded-md bg-slate-950 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-800" href="/signup">
+                <Link
+                  className="rounded-md bg-slate-950 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-950 dark:hover:bg-white"
+                  href="/signup"
+                >
                   Create account
                 </Link>
               </>
@@ -113,25 +142,66 @@ export function AppShell({ children, section = "public", user, logoutRedirect }:
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">{children}</main>
+      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+        {children}
+      </main>
       {section === "public" ? (
-        <footer className="border-t border-slate-200 bg-white/80">
-          <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-8 text-sm text-slate-500 sm:px-6 md:flex-row md:items-center md:justify-between lg:px-8">
+        <footer className="border-t border-slate-200 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80">
+          <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-8 text-sm text-slate-500 sm:px-6 md:flex-row md:items-center md:justify-between lg:px-8 dark:text-slate-400">
             <div>
-              <p className="font-semibold text-slate-950">SLAI</p>
+              <p className="font-semibold text-slate-950 dark:text-slate-100">
+                SLAI
+              </p>
               <p className="mt-1">Prepaid AI API credits for developers.</p>
             </div>
             <div className="flex flex-wrap gap-3">
-              <Link className="hover:text-slate-950" href="/packages">Packages</Link>
+              <Link
+                className="hover:text-slate-950 dark:hover:text-slate-100"
+                href="/packages"
+              >
+                Packages
+              </Link>
+              <Link
+                className="hover:text-slate-950 dark:hover:text-slate-100"
+                href="/terms"
+              >
+                Terms
+              </Link>
+              <Link
+                className="hover:text-slate-950 dark:hover:text-slate-100"
+                href="/privacy"
+              >
+                Privacy
+              </Link>
               {user ? (
                 <>
-                  <Link className="hover:text-slate-950" href="/dashboard">Dashboard</Link>
-                  <Link className="hover:text-slate-950" href="/dashboard/billing">Billing</Link>
+                  <Link
+                    className="hover:text-slate-950 dark:hover:text-slate-100"
+                    href="/dashboard"
+                  >
+                    Dashboard
+                  </Link>
+                  <Link
+                    className="hover:text-slate-950 dark:hover:text-slate-100"
+                    href="/dashboard/billing"
+                  >
+                    Billing
+                  </Link>
                 </>
               ) : (
                 <>
-                  <Link className="hover:text-slate-950" href="/login">Sign in</Link>
-                  <Link className="hover:text-slate-950" href="/signup">Create account</Link>
+                  <Link
+                    className="hover:text-slate-950 dark:hover:text-slate-100"
+                    href="/login"
+                  >
+                    Sign in
+                  </Link>
+                  <Link
+                    className="hover:text-slate-950 dark:hover:text-slate-100"
+                    href="/signup"
+                  >
+                    Create account
+                  </Link>
                 </>
               )}
             </div>
@@ -146,7 +216,7 @@ function DashboardFrame({
   children,
   user,
   pathname,
-  onLogout
+  onLogout,
 }: {
   children: React.ReactNode;
   user?: User | null;
@@ -167,36 +237,61 @@ function DashboardFrame({
       <aside className="fixed left-0 top-0 z-40 hidden h-screen w-64 flex-col border-r border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 lg:flex">
         <div className="border-b border-slate-200 px-6 py-5">
           <Link href="/dashboard" className="flex items-center gap-3">
-            <span className="grid size-9 place-items-center rounded-lg bg-slate-950 text-sm font-bold text-white shadow-sm">S</span>
+            <span className="grid size-9 place-items-center rounded-lg bg-slate-950 text-sm font-bold text-white shadow-sm">
+              S
+            </span>
             <span>
-              <span className="block text-base font-semibold leading-5 text-slate-950">SLAI</span>
-              <span className="block text-xs text-slate-500">Developer console</span>
+              <span className="block text-base font-semibold leading-5 text-slate-950">
+                SLAI
+              </span>
+              <span className="block text-xs text-slate-500">
+                Developer console
+              </span>
             </span>
           </Link>
         </div>
 
         <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-4 text-[13px] font-medium tracking-wide">
-          {dashboardItems.map((item) => <DashboardNavItem item={item} key={item.href} pathname={pathname} />)}
-          {showAdminLink ? <DashboardNavItem item={{ href: "/admin", label: "Admin", icon: "admin" }} pathname={pathname} /> : null}
+          {dashboardItems.map((item) => (
+            <DashboardNavItem item={item} key={item.href} pathname={pathname} />
+          ))}
+          {showAdminLink ? (
+            <DashboardNavItem
+              item={{ href: "/admin", label: "Admin", icon: "admin" }}
+              pathname={pathname}
+            />
+          ) : null}
         </nav>
 
         <div className="border-t border-slate-200 p-4">
           {user ? (
             <>
               <div className="mb-3 flex items-center gap-3 rounded-lg bg-white px-3 py-2 shadow-sm ring-1 ring-slate-200">
-                <span className="grid size-8 place-items-center rounded-md bg-slate-100 text-sm font-semibold text-slate-700">{userInitial(user)}</span>
+                <span className="grid size-8 place-items-center rounded-md bg-slate-100 text-sm font-semibold text-slate-700">
+                  {userInitial(user)}
+                </span>
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-slate-900">{user.email}</p>
+                  <p className="truncate text-sm font-medium text-slate-900">
+                    {user.email}
+                  </p>
                   <p className="text-xs text-slate-500">Developer account</p>
                 </div>
               </div>
               <ThemeToggle className="mb-2 w-full" />
-              <Button className="w-full justify-center" type="button" variant="secondary" onClick={logout} disabled={loggingOut}>
+              <Button
+                className="w-full justify-center"
+                type="button"
+                variant="secondary"
+                onClick={logout}
+                disabled={loggingOut}
+              >
                 {loggingOut ? "Signing out" : "Sign out"}
               </Button>
             </>
           ) : (
-            <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-500 shadow-sm">Checking session</div>
+            <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-500 shadow-sm">
+              Checking session
+            </div>
           )}
         </div>
       </aside>
@@ -206,8 +301,12 @@ function DashboardFrame({
           <div className="flex min-h-14 flex-col gap-3 px-4 py-3 sm:px-6 xl:flex-row xl:items-center xl:justify-between">
             <div className="flex items-center justify-between gap-3 lg:hidden">
               <Link href="/dashboard" className="flex items-center gap-2">
-                <span className="grid size-8 place-items-center rounded-md bg-slate-950 text-sm font-bold text-white">S</span>
-                <span className="text-sm font-semibold tracking-[0.16em] text-slate-900">SLAI</span>
+                <span className="grid size-8 place-items-center rounded-md bg-slate-950 text-sm font-bold text-white">
+                  S
+                </span>
+                <span className="text-sm font-semibold tracking-[0.16em] text-slate-900">
+                  SLAI
+                </span>
               </Link>
               <div className="flex items-center gap-2">
                 <ThemeToggle compact />
@@ -219,7 +318,9 @@ function DashboardFrame({
               </div>
             </div>
             <div className="relative w-full max-w-xl">
-              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">/</span>
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">
+                /
+              </span>
               <input
                 className="h-9 w-full rounded-md border border-slate-200 bg-slate-100 pl-9 pr-4 text-sm text-slate-900 outline-none ring-blue-600/20 transition placeholder:text-slate-500 focus:border-blue-600 focus:bg-white focus:ring-4"
                 placeholder="Search usage, ledger, keys..."
@@ -229,7 +330,10 @@ function DashboardFrame({
             <div className="hidden items-center justify-end gap-4 xl:flex">
               <ThemeToggle />
               {showAdminLink ? (
-                <Link className="rounded-md px-2 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950/40" href="/admin">
+                <Link
+                  className="rounded-md px-2 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950/40"
+                  href="/admin"
+                >
                   Admin
                 </Link>
               ) : null}
@@ -241,8 +345,19 @@ function DashboardFrame({
             </div>
           </div>
           <nav className="flex gap-1 overflow-x-auto border-t border-slate-200 px-3 py-2 text-sm font-medium lg:hidden">
-            {dashboardItems.map((item) => <MobileDashboardNavItem item={item} key={item.href} pathname={pathname} />)}
-            {showAdminLink ? <MobileDashboardNavItem item={{ href: "/admin", label: "Admin", icon: "admin" }} pathname={pathname} /> : null}
+            {dashboardItems.map((item) => (
+              <MobileDashboardNavItem
+                item={item}
+                key={item.href}
+                pathname={pathname}
+              />
+            ))}
+            {showAdminLink ? (
+              <MobileDashboardNavItem
+                item={{ href: "/admin", label: "Admin", icon: "admin" }}
+                pathname={pathname}
+              />
+            ) : null}
           </nav>
         </header>
 
@@ -252,7 +367,15 @@ function DashboardFrame({
   );
 }
 
-function DashboardNavItem({ item, pathname }: { item: (typeof navItems.dashboard)[number] | { href: string; label: string; icon: DashboardNavIconName }; pathname: string }) {
+function DashboardNavItem({
+  item,
+  pathname,
+}: {
+  item:
+    | (typeof navItems.dashboard)[number]
+    | { href: string; label: string; icon: DashboardNavIconName };
+  pathname: string;
+}) {
   const active = isActiveDashboardPath(pathname, item.href);
   return (
     <Link
@@ -261,10 +384,17 @@ function DashboardNavItem({ item, pathname }: { item: (typeof navItems.dashboard
         "group flex items-center gap-3 rounded-md border-l-2 px-4 py-2.5 transition-colors",
         active
           ? "border-blue-600 bg-white text-blue-600 shadow-sm ring-1 ring-slate-200/70 dark:bg-slate-900 dark:text-blue-300 dark:ring-slate-800/80"
-          : "border-transparent text-slate-600 hover:bg-slate-200/60 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-slate-800/80 dark:hover:text-slate-100"
+          : "border-transparent text-slate-600 hover:bg-slate-200/60 hover:text-slate-950 dark:text-slate-400 dark:hover:bg-slate-800/80 dark:hover:text-slate-100",
       )}
     >
-      <span className={cn("grid size-6 place-items-center rounded", active ? "bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300" : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400")}>
+      <span
+        className={cn(
+          "grid size-6 place-items-center rounded",
+          active
+            ? "bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300"
+            : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
+        )}
+      >
         <DashboardNavIcon name={item.icon as DashboardNavIconName} />
       </span>
       {item.label}
@@ -272,10 +402,26 @@ function DashboardNavItem({ item, pathname }: { item: (typeof navItems.dashboard
   );
 }
 
-function MobileDashboardNavItem({ item, pathname }: { item: (typeof navItems.dashboard)[number] | { href: string; label: string; icon: DashboardNavIconName }; pathname: string }) {
+function MobileDashboardNavItem({
+  item,
+  pathname,
+}: {
+  item:
+    | (typeof navItems.dashboard)[number]
+    | { href: string; label: string; icon: DashboardNavIconName };
+  pathname: string;
+}) {
   const active = isActiveDashboardPath(pathname, item.href);
   return (
-    <Link className={cn("whitespace-nowrap rounded-md px-3 py-1.5", active ? "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300" : "text-slate-600 dark:text-slate-400")} href={item.href}>
+    <Link
+      className={cn(
+        "whitespace-nowrap rounded-md px-3 py-1.5",
+        active
+          ? "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300"
+          : "text-slate-600 dark:text-slate-400",
+      )}
+      href={item.href}
+    >
       {item.label}
     </Link>
   );
@@ -304,6 +450,14 @@ function DashboardNavIcon({ name }: { name: DashboardNavIconName }) {
         <path d="M16.5 8.5h.01" />
       </>
     ),
+    docs: (
+      <>
+        <path d="M6 4h8l4 4v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z" />
+        <path d="M14 4v4h4" />
+        <path d="M8 12h8" />
+        <path d="M8 16h5" />
+      </>
+    ),
     usage: (
       <>
         <path d="M4 19h16" />
@@ -330,11 +484,20 @@ function DashboardNavIcon({ name }: { name: DashboardNavIconName }) {
         <path d="M12 3 19 6v5c0 4.4-2.9 8.4-7 10-4.1-1.6-7-5.6-7-10V6l7-3Z" />
         <path d="M9.5 12.5 11 14l3.5-4" />
       </>
-    )
+    ),
   };
 
   return (
-    <svg aria-hidden="true" className="size-4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24">
+    <svg
+      aria-hidden="true"
+      className="size-4"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.8"
+      viewBox="0 0 24 24"
+    >
       {paths[name]}
     </svg>
   );

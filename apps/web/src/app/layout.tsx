@@ -8,17 +8,20 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "SLAI",
-  description: "Prepaid AI API credits for developers"
+  description: "Prepaid AI API credits for developers",
 };
 
 const themeScript = `try {
   var theme = window.localStorage.getItem("slai-theme");
-  var dark = theme === "dark";
+  var prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  var dark = theme === "dark" || (!theme && prefersDark);
   document.documentElement.classList.toggle("dark", dark);
   document.documentElement.style.colorScheme = dark ? "dark" : "light";
 } catch (_) {}`;
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default function RootLayout({
+  children,
+}: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" suppressHydrationWarning>
       <body suppressHydrationWarning>

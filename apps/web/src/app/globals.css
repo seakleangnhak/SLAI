@@ -28,7 +28,14 @@ body {
   margin: 0;
   background: var(--background);
   color: var(--foreground);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
 }
 
 a:not([class]) {
@@ -47,7 +54,6 @@ a:not([class]) {
     transform: translateX(0);
   }
 }
-
 
 .dark body {
   background: var(--background);
@@ -187,7 +193,6 @@ a:not([class]) {
   box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.35) !important;
 }
 
-
 .dark [class~="bg-[#f5f7fb]"],
 .dark [class~="bg-slate-50/80"],
 .dark [class~="bg-slate-50/95"] {
@@ -216,12 +221,21 @@ a:not([class]) {
 .dark [class~="from-slate-50"] {
   --tw-gradient-from: rgb(15 23 42 / 0.92) var(--tw-gradient-from-position) !important;
   --tw-gradient-to: rgb(15 23 42 / 0) var(--tw-gradient-to-position) !important;
-  --tw-gradient-stops: var(--tw-gradient-via-stops, var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position)) !important;
+  --tw-gradient-stops: var(
+    --tw-gradient-via-stops,
+    var(--tw-gradient-position),
+    var(--tw-gradient-from) var(--tw-gradient-from-position),
+    var(--tw-gradient-to) var(--tw-gradient-to-position)
+  ) !important;
 }
 
 .dark [class~="via-blue-50/70"] {
   --tw-gradient-via: rgb(30 58 138 / 0.22) var(--tw-gradient-via-position) !important;
-  --tw-gradient-via-stops: var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-via) var(--tw-gradient-via-position), var(--tw-gradient-to) var(--tw-gradient-to-position) !important;
+  --tw-gradient-via-stops:
+    var(--tw-gradient-position),
+    var(--tw-gradient-from) var(--tw-gradient-from-position),
+    var(--tw-gradient-via) var(--tw-gradient-via-position),
+    var(--tw-gradient-to) var(--tw-gradient-to-position) !important;
 }
 
 .dark [class~="to-white"],
@@ -258,7 +272,12 @@ a:not([class]) {
 }
 
 .dark .slai-overview-credit-card .slai-overview-credit-bar {
-  background-image: linear-gradient(90deg, rgb(59 130 246 / 0.7), rgb(45 212 191 / 0.55), rgb(45 212 191 / 0.08)) !important;
+  background-image: linear-gradient(
+    90deg,
+    rgb(59 130 246 / 0.7),
+    rgb(45 212 191 / 0.55),
+    rgb(45 212 191 / 0.08)
+  ) !important;
   opacity: 0.82;
 }
 
@@ -281,7 +300,12 @@ a:not([class]) {
 .dark .slai-usage-async-card {
   background:
     radial-gradient(circle at 2% 50%, rgb(56 189 248 / 0.14), transparent 26%),
-    linear-gradient(100deg, rgb(15 23 42 / 0.98) 0%, rgb(15 23 42 / 0.92) 58%, rgb(12 32 40 / 0.9) 100%) !important;
+    linear-gradient(
+      100deg,
+      rgb(15 23 42 / 0.98) 0%,
+      rgb(15 23 42 / 0.92) 58%,
+      rgb(12 32 40 / 0.9) 100%
+    ) !important;
   border-color: rgb(56 189 248 / 0.26) !important;
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 0.04),
@@ -297,7 +321,6 @@ a:not([class]) {
 .dark .slai-usage-async-card .slai-usage-async-copy {
   color: #9fb0c8 !important;
 }
-
 
 /* Admin dark mode refinements for tables, forms, drawers, and status surfaces. */
 .dark .border-slate-100,
@@ -450,12 +473,21 @@ a:not([class]) {
 .dark [class~="from-slate-50"] {
   --tw-gradient-from: rgb(15 23 42 / 0.96) var(--tw-gradient-from-position) !important;
   --tw-gradient-to: rgb(15 23 42 / 0) var(--tw-gradient-to-position) !important;
-  --tw-gradient-stops: var(--tw-gradient-via-stops, var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position)) !important;
+  --tw-gradient-stops: var(
+    --tw-gradient-via-stops,
+    var(--tw-gradient-position),
+    var(--tw-gradient-from) var(--tw-gradient-from-position),
+    var(--tw-gradient-to) var(--tw-gradient-to-position)
+  ) !important;
 }
 
 .dark [class~="via-white"] {
   --tw-gradient-via: rgb(15 23 42 / 0.92) var(--tw-gradient-via-position) !important;
-  --tw-gradient-via-stops: var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-via) var(--tw-gradient-via-position), var(--tw-gradient-to) var(--tw-gradient-to-position) !important;
+  --tw-gradient-via-stops:
+    var(--tw-gradient-position),
+    var(--tw-gradient-from) var(--tw-gradient-from-position),
+    var(--tw-gradient-via) var(--tw-gradient-via-position),
+    var(--tw-gradient-to) var(--tw-gradient-to-position) !important;
 }
 
 .dark [class~="to-white"] {
@@ -533,22 +565,35 @@ a:not([class]) {
   border-top-color: rgb(71 85 105 / 0.34) !important;
 }
 
-
 .dark [class~="from-amber-50"] {
   --tw-gradient-from: rgb(120 53 15 / 0.32) var(--tw-gradient-from-position) !important;
-  --tw-gradient-stops: var(--tw-gradient-via-stops, var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position)) !important;
+  --tw-gradient-stops: var(
+    --tw-gradient-via-stops,
+    var(--tw-gradient-position),
+    var(--tw-gradient-from) var(--tw-gradient-from-position),
+    var(--tw-gradient-to) var(--tw-gradient-to-position)
+  ) !important;
 }
 
 .dark [class~="from-emerald-50"] {
   --tw-gradient-from: rgb(6 78 59 / 0.32) var(--tw-gradient-from-position) !important;
-  --tw-gradient-stops: var(--tw-gradient-via-stops, var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position)) !important;
+  --tw-gradient-stops: var(
+    --tw-gradient-via-stops,
+    var(--tw-gradient-position),
+    var(--tw-gradient-from) var(--tw-gradient-from-position),
+    var(--tw-gradient-to) var(--tw-gradient-to-position)
+  ) !important;
 }
 
 .dark [class~="from-red-50"] {
   --tw-gradient-from: rgb(127 29 29 / 0.3) var(--tw-gradient-from-position) !important;
-  --tw-gradient-stops: var(--tw-gradient-via-stops, var(--tw-gradient-position), var(--tw-gradient-from) var(--tw-gradient-from-position), var(--tw-gradient-to) var(--tw-gradient-to-position)) !important;
+  --tw-gradient-stops: var(
+    --tw-gradient-via-stops,
+    var(--tw-gradient-position),
+    var(--tw-gradient-from) var(--tw-gradient-from-position),
+    var(--tw-gradient-to) var(--tw-gradient-to-position)
+  ) !important;
 }
-
 
 /* Soften pure white utilities in dark mode. */
 .dark .text-white,
@@ -579,4 +624,379 @@ a:not([class]) {
 
 .dark [class~="dark:text-slate-950"] {
   color: #0f172a !important;
+}
+
+/* Checkout dark mode uses a narrower payment palette than the dashboard defaults. */
+.dark .slai-checkout-theme {
+  --checkout-surface: rgb(14 21 36 / 0.96);
+  --checkout-surface-soft: rgb(18 28 48 / 0.92);
+  --checkout-surface-raised: rgb(22 34 57 / 0.88);
+  --checkout-border: rgb(78 95 125 / 0.48);
+  --checkout-border-strong: rgb(96 165 250 / 0.5);
+  --checkout-text: #e6edf8;
+  --checkout-muted: #a7b7cf;
+  --checkout-faint: #7f90ab;
+  --checkout-accent: #7dd3fc;
+  --checkout-accent-soft: rgb(14 116 144 / 0.24);
+  --checkout-success: #86efac;
+  --checkout-warning: #fbbf24;
+  --checkout-danger: #fca5a5;
+}
+
+.dark .slai-checkout-theme :is(.slai-checkout-hero, .slai-checkout-card) {
+  background: linear-gradient(
+    180deg,
+    rgb(15 23 42 / 0.98),
+    rgb(13 21 35 / 0.96)
+  ) !important;
+  border-color: var(--checkout-border) !important;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.035),
+    0 14px 30px rgb(2 6 23 / 0.18) !important;
+}
+
+.dark .slai-checkout-hero {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.04),
+    0 18px 40px rgb(2 6 23 / 0.24) !important;
+}
+
+.dark .slai-checkout-hero h1,
+.dark .slai-checkout-card h2,
+.dark .slai-checkout-theme .text-slate-950,
+.dark .slai-checkout-theme .text-slate-900 {
+  color: var(--checkout-text) !important;
+}
+
+.dark .slai-checkout-theme .text-slate-700,
+.dark .slai-checkout-theme .text-slate-600,
+.dark .slai-checkout-theme .text-slate-500 {
+  color: var(--checkout-muted) !important;
+}
+
+.dark .slai-checkout-theme .text-slate-400 {
+  color: var(--checkout-faint) !important;
+}
+
+.dark .slai-checkout-theme .text-blue-700,
+.dark .slai-checkout-theme .text-blue-800,
+.dark .slai-checkout-theme .text-blue-900 {
+  color: var(--checkout-accent) !important;
+}
+
+.dark .slai-checkout-secondary-action {
+  background: rgb(17 27 45 / 0.96) !important;
+  border-color: var(--checkout-border) !important;
+  color: var(--checkout-text) !important;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.035) !important;
+}
+
+.dark .slai-checkout-secondary-action:hover {
+  background: rgb(26 39 63 / 0.96) !important;
+  border-color: rgb(125 211 252 / 0.38) !important;
+}
+
+.dark .slai-checkout-metric,
+.dark .slai-checkout-info-row,
+.dark .slai-checkout-step,
+.dark .slai-checkout-muted-panel,
+.dark .slai-checkout-upload-panel,
+.dark .slai-checkout-selected-file,
+.dark .slai-checkout-empty-qr {
+  background: var(--checkout-surface-soft) !important;
+  border-color: var(--checkout-border) !important;
+}
+
+.dark .slai-checkout-metric-accent {
+  background: linear-gradient(
+    135deg,
+    rgb(14 116 144 / 0.28),
+    rgb(37 99 235 / 0.18)
+  ) !important;
+  border-color: var(--checkout-border-strong) !important;
+}
+
+.dark .slai-checkout-metric-muted {
+  background: rgb(16 25 42 / 0.92) !important;
+}
+
+.dark .slai-checkout-info-panel,
+.dark .slai-checkout-status-blue {
+  background: linear-gradient(
+    135deg,
+    rgb(14 116 144 / 0.2),
+    rgb(29 78 216 / 0.14)
+  ) !important;
+  border-color: rgb(56 189 248 / 0.36) !important;
+  color: #bae6fd !important;
+}
+
+.dark .slai-checkout-status-green,
+.dark .slai-checkout-success-panel {
+  background: rgb(6 78 59 / 0.26) !important;
+  border-color: rgb(52 211 153 / 0.34) !important;
+  color: var(--checkout-success) !important;
+}
+
+.dark .slai-checkout-status-yellow,
+.dark .slai-checkout-warning-panel,
+.dark .slai-checkout-warning-card {
+  background: rgb(113 63 18 / 0.24) !important;
+  border-color: rgb(251 191 36 / 0.36) !important;
+  color: #fde68a !important;
+}
+
+.dark .slai-checkout-status-red,
+.dark .slai-checkout-error-panel {
+  background: rgb(127 29 29 / 0.25) !important;
+  border-color: rgb(248 113 113 / 0.36) !important;
+  color: var(--checkout-danger) !important;
+}
+
+.dark .slai-checkout-warning-card p,
+.dark .slai-checkout-warning-card .text-amber-900\/80,
+.dark .slai-checkout-warning-panel a {
+  color: #fde68a !important;
+}
+
+.dark .slai-checkout-upload-panel:hover {
+  background: rgb(20 37 58 / 0.96) !important;
+  border-color: rgb(125 211 252 / 0.42) !important;
+}
+
+.dark .slai-checkout-qr-frame {
+  background:
+    radial-gradient(circle at 50% 0%, rgb(125 211 252 / 0.12), transparent 52%),
+    linear-gradient(180deg, rgb(10 18 32 / 0.96), rgb(15 23 42 / 0.98)) !important;
+  border-color: var(--checkout-border) !important;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.05),
+    inset 0 -18px 40px rgb(2 6 23 / 0.18) !important;
+}
+
+.dark .slai-checkout-qr-image {
+  background-color: #fff !important;
+  border-color: rgb(226 232 240 / 0.9) !important;
+  box-shadow: 0 18px 42px rgb(2 6 23 / 0.32) !important;
+}
+
+.dark .slai-checkout-step span {
+  background: rgb(6 12 24 / 0.96) !important;
+  color: #dbeafe !important;
+  box-shadow: inset 0 0 0 1px rgb(125 211 252 / 0.18);
+}
+
+.dark .slai-checkout-theme input[type="file"]::file-selector-button {
+  background-color: #dbeafe !important;
+  color: #0f172a !important;
+}
+
+.dark .slai-checkout-theme input[type="file"]:hover::file-selector-button {
+  background-color: #bfdbfe !important;
+}
+
+.dark .slai-checkout-success-overlay {
+  background: rgb(2 6 23 / 0.7) !important;
+}
+
+.dark .slai-checkout-success-dialog {
+  background: linear-gradient(
+    180deg,
+    rgb(14 23 38 / 0.98),
+    rgb(12 20 34 / 0.98)
+  ) !important;
+  border-color: rgb(52 211 153 / 0.36) !important;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.04),
+    0 28px 80px rgb(2 6 23 / 0.58) !important;
+}
+
+.dark .slai-checkout-success-dialog h2,
+.dark .slai-checkout-success-summary .text-slate-950 {
+  color: var(--checkout-text) !important;
+}
+
+.dark .slai-checkout-success-dialog .text-slate-600 {
+  color: var(--checkout-muted) !important;
+}
+
+.dark .slai-checkout-success-dialog .text-emerald-700 {
+  color: var(--checkout-success) !important;
+}
+
+.dark .slai-checkout-success-mark {
+  background: rgb(6 95 70 / 0.36) !important;
+  color: var(--checkout-success) !important;
+  box-shadow: inset 0 0 0 1px rgb(52 211 153 / 0.25);
+}
+
+.dark .slai-checkout-success-summary {
+  background: rgb(6 78 59 / 0.2) !important;
+  border-color: rgb(52 211 153 / 0.3) !important;
+}
+
+.dark article .bg-white,
+.dark article [class~="bg-white"] {
+  background-color: rgb(15 23 42 / 0.94) !important;
+}
+
+.dark article [class~="bg-amber-50"] {
+  background-color: rgb(113 63 18 / 0.24) !important;
+}
+
+/* Marketing page dark mode refinements. */
+.dark .slai-marketing-page {
+  --marketing-surface: rgb(15 23 42 / 0.94);
+  --marketing-surface-soft: rgb(18 28 48 / 0.86);
+  --marketing-surface-muted: rgb(12 19 33 / 0.94);
+  --marketing-border: rgb(82 103 135 / 0.46);
+  --marketing-border-soft: rgb(71 85 105 / 0.34);
+  --marketing-text: #e7edf7;
+  --marketing-muted: #a8b6cc;
+  --marketing-faint: #8291a8;
+  --marketing-blue: #8cc8ff;
+  --marketing-cyan: #67e8f9;
+  --marketing-amber: #fbbf24;
+}
+
+.dark .slai-marketing-page :is(h1, h2, h3, .text-slate-950, .text-slate-900) {
+  color: var(--marketing-text) !important;
+}
+
+.dark
+  .slai-marketing-page
+  :is(.text-slate-700, .text-slate-600, .text-slate-500) {
+  color: var(--marketing-muted) !important;
+}
+
+.dark .slai-marketing-page :is(.text-blue-700, .text-blue-600) {
+  color: var(--marketing-blue) !important;
+}
+
+.dark .slai-marketing-hero {
+  background:
+    radial-gradient(circle at 67% 20%, rgb(125 211 252 / 0.2), transparent 35%),
+    linear-gradient(135deg, rgb(16 25 43 / 0.98), rgb(10 17 31 / 0.98)) !important;
+  border-color: var(--marketing-border) !important;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.04),
+    0 24px 70px rgb(2 6 23 / 0.24) !important;
+}
+
+.dark .slai-marketing-grid {
+  background-image:
+    linear-gradient(to right, rgb(148 163 184 / 0.2) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(148 163 184 / 0.2) 1px, transparent 1px) !important;
+  opacity: 0.55 !important;
+}
+
+.dark .slai-marketing-hero-glow,
+.dark .slai-marketing-preview-glow {
+  background-color: rgb(56 189 248 / 0.12) !important;
+}
+
+.dark .slai-marketing-trust-pill,
+.dark .slai-marketing-card,
+.dark .slai-marketing-band,
+.dark .slai-marketing-preview,
+.dark .slai-marketing-preview-screen,
+.dark .slai-marketing-preview-tile,
+.dark .slai-marketing-preview-header,
+.dark .slai-marketing-preview-footer {
+  background: var(--marketing-surface-soft) !important;
+  border-color: var(--marketing-border) !important;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.035),
+    0 10px 24px rgb(2 6 23 / 0.12) !important;
+}
+
+.dark .slai-marketing-card:hover {
+  border-color: rgb(125 211 252 / 0.42) !important;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.045),
+    0 16px 36px rgb(2 6 23 / 0.2) !important;
+}
+
+.dark .slai-marketing-step-index {
+  background: rgb(37 99 235 / 0.22) !important;
+  color: #bfdbfe !important;
+  box-shadow: inset 0 0 0 1px rgb(96 165 250 / 0.22) !important;
+}
+
+.dark .slai-marketing-feature-index {
+  background: rgb(6 12 24 / 0.9) !important;
+  color: #dbeafe !important;
+  box-shadow: inset 0 0 0 1px rgb(125 211 252 / 0.16);
+}
+
+.dark .slai-marketing-preview {
+  background: linear-gradient(
+    180deg,
+    rgb(20 31 51 / 0.92),
+    rgb(13 21 36 / 0.96)
+  ) !important;
+}
+
+.dark .slai-marketing-preview-screen {
+  background: rgb(11 18 31 / 0.98) !important;
+}
+
+.dark .slai-marketing-preview-tile .bg-slate-100 {
+  background-color: rgb(30 41 59 / 0.9) !important;
+}
+
+.dark .slai-marketing-preview-tile .bg-slate-200 {
+  background-color: rgb(71 85 105 / 0.55) !important;
+}
+
+.dark .slai-marketing-code {
+  background: rgb(5 10 24 / 0.98) !important;
+  border-color: rgb(51 65 85 / 0.7) !important;
+  box-shadow: 0 18px 42px rgb(2 6 23 / 0.3) !important;
+}
+
+.dark .slai-marketing-payment {
+  background: linear-gradient(
+    135deg,
+    rgb(113 63 18 / 0.2),
+    rgb(15 23 42 / 0.94)
+  ) !important;
+  border-color: rgb(251 191 36 / 0.38) !important;
+}
+
+.dark .slai-marketing-payment .text-amber-800\/80 {
+  color: #fcd34d !important;
+}
+
+.dark .slai-marketing-cta {
+  background:
+    radial-gradient(circle at 8% 0%, rgb(56 189 248 / 0.14), transparent 36%),
+    linear-gradient(135deg, rgb(13 23 39 / 0.98), rgb(6 12 24 / 0.98)) !important;
+  border: 1px solid var(--marketing-border-soft);
+}
+
+.dark .slai-marketing-cta .bg-white {
+  background-color: #e8f1ff !important;
+  color: #0f172a !important;
+}
+
+.dark .slai-marketing-primary {
+  background: linear-gradient(135deg, #e8f1ff, #c7d9f5) !important;
+  color: #0f172a !important;
+  box-shadow: 0 10px 24px rgb(2 6 23 / 0.18) !important;
+}
+
+.dark .slai-marketing-primary:hover {
+  background: #f8fbff !important;
+}
+
+.dark .slai-marketing-secondary {
+  background: rgb(18 29 49 / 0.95) !important;
+  border-color: var(--marketing-border) !important;
+  color: var(--marketing-text) !important;
+}
+
+.dark .slai-marketing-secondary:hover {
+  background: rgb(28 43 70 / 0.96) !important;
+  border-color: rgb(125 211 252 / 0.4) !important;
 }
