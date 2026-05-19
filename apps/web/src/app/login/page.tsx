@@ -158,6 +158,11 @@ export default function LoginPage() {
             placeholder="Enter your password"
             value={password}
           />
+          <div className="-mt-2 flex justify-end text-sm">
+            <Link className="font-semibold text-blue-700 hover:text-blue-800" href="/password-reset">
+              Forgot password?
+            </Link>
+          </div>
           <Button
             className="h-12 w-full rounded-xl bg-slate-950 text-base shadow-sm hover:bg-slate-800"
             type="submit"

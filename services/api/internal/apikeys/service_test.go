@@ -319,7 +319,7 @@ func creditUser(t *testing.T, userID string, units int64) {
 func truncateTables(t *testing.T) {
 	t.Helper()
 	_, err := testDB.Exec(context.Background(), `
-		TRUNCATE admin_audit_logs, credit_ledger_entries, payments, credit_balances, sessions, credit_packages, api_keys, users
+		TRUNCATE admin_audit_logs, credit_ledger_entries, payments, credit_balances, sessions, signup_otp_rate_limits, signup_email_verifications, credit_packages, api_keys, users
 		RESTART IDENTITY CASCADE
 	`)
 	if err != nil {

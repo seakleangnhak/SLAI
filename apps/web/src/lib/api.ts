@@ -17,6 +17,16 @@ export type User = {
   updatedAt: string;
 };
 
+export type SignupVerification = {
+  email: string;
+  expiresAt: string;
+};
+
+export type PasswordResetVerification = {
+  email: string;
+  expiresAt: string;
+};
+
 export type CreditPackage = {
   id: string;
   name: string;
@@ -659,9 +669,24 @@ function scaleAdjustmentInput(input: AdjustmentInput): AdjustmentInput {
 export const api = {
   auth: {
     signup: (email: string, password: string) =>
-      apiFetch<{ user: User }>("/v1/auth/signup", {
+      apiFetch<{ verification: SignupVerification }>("/v1/auth/signup", {
         method: "POST",
         body: { email, password }
+      }),
+    verifySignup: (email: string, otp: string) =>
+      apiFetch<{ user: User }>("/v1/auth/signup/verify", {
+        method: "POST",
+        body: { email, otp }
+      }),
+    requestPasswordReset: (email: string) =>
+      apiFetch<{ verification: PasswordResetVerification }>("/v1/auth/password-reset/request", {
+        method: "POST",
+        body: { email }
+      }),
+    confirmPasswordReset: (email: string, otp: string, password: string) =>
+      apiFetch<{ status: string }>("/v1/auth/password-reset/confirm", {
+        method: "POST",
+        body: { email, otp, password }
       }),
     login: (email: string, password: string) =>
       apiFetch<{ user: User }>("/v1/auth/login", {

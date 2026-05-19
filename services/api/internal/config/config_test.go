@@ -49,6 +49,48 @@ func TestUsageSyncWorkerConfigDefaults(t *testing.T) {
 	if cfg.SLAIPayment.DefaultExpiry != 30*time.Minute {
 		t.Fatalf("SLAI payment expiry = %s, want 30m", cfg.SLAIPayment.DefaultExpiry)
 	}
+	if cfg.Email.SMTPPort != 587 {
+		t.Fatalf("SMTP port = %d, want 587", cfg.Email.SMTPPort)
+	}
+	if cfg.Email.SignupOTPTTL != 10*time.Minute {
+		t.Fatalf("signup OTP TTL = %s, want 10m", cfg.Email.SignupOTPTTL)
+	}
+	if cfg.Email.SendTimeout != 10*time.Second {
+		t.Fatalf("email send timeout = %s, want 10s", cfg.Email.SendTimeout)
+	}
+	if cfg.Email.BrevoAPIURL != "https://api.brevo.com/v3/smtp/email" {
+		t.Fatalf("Brevo API URL = %q", cfg.Email.BrevoAPIURL)
+	}
+	if cfg.Email.SignupOTPResendCooldown != time.Minute {
+		t.Fatalf("signup OTP resend cooldown = %s, want 1m", cfg.Email.SignupOTPResendCooldown)
+	}
+	if cfg.Email.SignupOTPRequestWindow != time.Hour {
+		t.Fatalf("signup OTP request window = %s, want 1h", cfg.Email.SignupOTPRequestWindow)
+	}
+	if cfg.Email.SignupOTPMaxEmailRequests != 5 {
+		t.Fatalf("signup OTP max email requests = %d, want 5", cfg.Email.SignupOTPMaxEmailRequests)
+	}
+	if cfg.Email.SignupOTPMaxIPRequests != 20 {
+		t.Fatalf("signup OTP max IP requests = %d, want 20", cfg.Email.SignupOTPMaxIPRequests)
+	}
+	if cfg.Email.SignupOTPCleanupInterval != 15*time.Minute {
+		t.Fatalf("signup OTP cleanup interval = %s, want 15m", cfg.Email.SignupOTPCleanupInterval)
+	}
+	if cfg.Email.PasswordResetOTPTTL != 10*time.Minute {
+		t.Fatalf("password reset OTP TTL = %s, want 10m", cfg.Email.PasswordResetOTPTTL)
+	}
+	if cfg.Email.PasswordResetOTPResendCooldown != time.Minute {
+		t.Fatalf("password reset OTP resend cooldown = %s, want 1m", cfg.Email.PasswordResetOTPResendCooldown)
+	}
+	if cfg.Email.PasswordResetOTPRequestWindow != time.Hour {
+		t.Fatalf("password reset OTP request window = %s, want 1h", cfg.Email.PasswordResetOTPRequestWindow)
+	}
+	if cfg.Email.PasswordResetOTPMaxEmailRequests != 5 {
+		t.Fatalf("password reset OTP max email requests = %d, want 5", cfg.Email.PasswordResetOTPMaxEmailRequests)
+	}
+	if cfg.Email.PasswordResetOTPMaxIPRequests != 20 {
+		t.Fatalf("password reset OTP max IP requests = %d, want 20", cfg.Email.PasswordResetOTPMaxIPRequests)
+	}
 }
 
 func TestSLAIPaymentEnabledRequiresCallbackSecret(t *testing.T) {
@@ -118,6 +160,26 @@ func clearConfigEnv(t *testing.T) {
 		"SLAI_PAYMENT_MERCHANT_PREFIX",
 		"SLAI_PAYMENT_DEFAULT_EXPIRY",
 		"SLAI_PAYMENT_HTTP_TIMEOUT",
+		"SMTP_HOST",
+		"SMTP_PORT",
+		"SMTP_USERNAME",
+		"SMTP_PASSWORD",
+		"SMTP_FROM",
+		"EMAIL_FROM",
+		"BREVO_API_KEY",
+		"BREVO_API_URL",
+		"EMAIL_SEND_TIMEOUT",
+		"SIGNUP_OTP_TTL",
+		"SIGNUP_OTP_RESEND_COOLDOWN",
+		"SIGNUP_OTP_REQUEST_WINDOW",
+		"SIGNUP_OTP_MAX_EMAIL_REQUESTS",
+		"SIGNUP_OTP_MAX_IP_REQUESTS",
+		"SIGNUP_OTP_CLEANUP_INTERVAL",
+		"PASSWORD_RESET_OTP_TTL",
+		"PASSWORD_RESET_OTP_RESEND_COOLDOWN",
+		"PASSWORD_RESET_OTP_REQUEST_WINDOW",
+		"PASSWORD_RESET_OTP_MAX_EMAIL_REQUESTS",
+		"PASSWORD_RESET_OTP_MAX_IP_REQUESTS",
 	} {
 		unsetEnv(t, key)
 	}

@@ -113,9 +113,11 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		Storage:           cfg.Storage,
 		SLAIPayment:       cfg.SLAIPayment,
 		SLAIPaymentClient: slaiPaymentClient,
+		Email:             cfg.Email,
 	}, pool, logger)
 
 	server.StartUsageSyncWorker(ctx)
+	server.StartSignupOTPCleanupWorker(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

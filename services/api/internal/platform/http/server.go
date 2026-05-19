@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -51,29 +52,32 @@ type ServerConfig struct {
 	SLAIPayment       config.SLAIPaymentConfig
 	SLAIPaymentClient slaipayment.Client
 	GoogleVerifier    auth.GoogleIdentityVerifier
+	Email             config.EmailConfig
+	EmailSender       auth.EmailSender
 }
 
 type Server struct {
-	server            *http.Server
-	db                *pgxpool.Pool
-	log               *slog.Logger
-	readinessTimeout  time.Duration
-	sessionTTL        time.Duration
-	sessions          auth.SessionManager
-	authService       auth.Service
-	paymentService    payments.Service
-	adminService      admin.Service
-	apiKeyService     apikeys.Service
-	usageService      usage.Service
-	omniRouteCfg      config.OmniRouteConfig
-	usageSyncCfg      config.UsageSyncWorkerConfig
-	usageSyncExecutor *usage.SyncExecutor
-	usageSyncStatus   *usage.SyncStatusTracker
-	usageSyncWorker   *usage.SyncWorker
-	slaiPaymentCfg    config.SLAIPaymentConfig
-	storageDir        string
-	paymentProofMax   int64
-	paymentQRMax      int64
+	server                   *http.Server
+	db                       *pgxpool.Pool
+	log                      *slog.Logger
+	readinessTimeout         time.Duration
+	sessionTTL               time.Duration
+	sessions                 auth.SessionManager
+	authService              auth.Service
+	paymentService           payments.Service
+	adminService             admin.Service
+	apiKeyService            apikeys.Service
+	usageService             usage.Service
+	omniRouteCfg             config.OmniRouteConfig
+	usageSyncCfg             config.UsageSyncWorkerConfig
+	usageSyncExecutor        *usage.SyncExecutor
+	usageSyncStatus          *usage.SyncStatusTracker
+	usageSyncWorker          *usage.SyncWorker
+	slaiPaymentCfg           config.SLAIPaymentConfig
+	storageDir               string
+	paymentProofMax          int64
+	paymentQRMax             int64
+	signupOTPCleanupInterval time.Duration
 }
 
 func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Server {
@@ -115,7 +119,45 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 		SLAIPaymentDefaultExpiry:   cfg.SLAIPayment.DefaultExpiry,
 	}).WithSLAIPaymentClient(cfg.SLAIPaymentClient).WithAutoResumeAPIKey(autoResumeAPIKey)
 
-	authService := auth.NewService(pool, sessions)
+	emailSender := cfg.EmailSender
+	if emailSender == nil {
+		if strings.TrimSpace(cfg.Email.BrevoAPIKey) != "" {
+			emailSender = auth.NewBrevoEmailSender(auth.BrevoConfig{
+				APIKey:  cfg.Email.BrevoAPIKey,
+				APIURL:  cfg.Email.BrevoAPIURL,
+				From:    cfg.Email.SMTPFrom,
+				Timeout: cfg.Email.SendTimeout,
+			})
+		} else if strings.TrimSpace(cfg.Email.SMTPHost) != "" {
+			emailSender = auth.NewSMTPEmailSender(auth.SMTPConfig{
+				Host:     cfg.Email.SMTPHost,
+				Port:     cfg.Email.SMTPPort,
+				Username: cfg.Email.SMTPUsername,
+				Password: cfg.Email.SMTPPassword,
+				From:     cfg.Email.SMTPFrom,
+				Timeout:  cfg.Email.SendTimeout,
+			})
+		} else {
+			emailSender = auth.NoopEmailSender{Log: logger}
+		}
+	}
+
+	authService := auth.NewService(pool, sessions).
+		WithEmailSender(emailSender).
+		WithSignupOTPTTL(cfg.Email.SignupOTPTTL).
+		WithSignupOTPControls(
+			cfg.Email.SignupOTPResendCooldown,
+			cfg.Email.SignupOTPRequestWindow,
+			cfg.Email.SignupOTPMaxEmailRequests,
+			cfg.Email.SignupOTPMaxIPRequests,
+		).
+		WithPasswordResetOTPTTL(cfg.Email.PasswordResetOTPTTL).
+		WithPasswordResetOTPControls(
+			cfg.Email.PasswordResetOTPResendCooldown,
+			cfg.Email.PasswordResetOTPRequestWindow,
+			cfg.Email.PasswordResetOTPMaxEmailRequests,
+			cfg.Email.PasswordResetOTPMaxIPRequests,
+		)
 	if strings.TrimSpace(cfg.GoogleClientID) != "" {
 		authService = authService.WithGoogleVerifier(auth.NewGoogleIDTokenVerifier(cfg.GoogleClientID))
 	}
@@ -124,25 +166,26 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 	}
 
 	server := &Server{
-		db:                pool,
-		log:               logger,
-		readinessTimeout:  cfg.ReadinessTimeout,
-		sessionTTL:        cfg.SessionTTL,
-		sessions:          sessions,
-		authService:       authService,
-		paymentService:    paymentService,
-		adminService:      admin.NewService(pool),
-		apiKeyService:     apiKeyService,
-		usageService:      usageService,
-		omniRouteCfg:      cfg.OmniRoute,
-		usageSyncCfg:      cfg.UsageSyncWorker,
-		usageSyncExecutor: usageSyncExecutor,
-		usageSyncStatus:   usageSyncStatus,
-		usageSyncWorker:   usageSyncWorker,
-		slaiPaymentCfg:    cfg.SLAIPayment,
-		storageDir:        cfg.Storage.Dir,
-		paymentProofMax:   int64(cfg.Storage.PaymentProofMaxMB) * 1024 * 1024,
-		paymentQRMax:      int64(cfg.Storage.PaymentQRMaxMB) * 1024 * 1024,
+		db:                       pool,
+		log:                      logger,
+		readinessTimeout:         cfg.ReadinessTimeout,
+		sessionTTL:               cfg.SessionTTL,
+		sessions:                 sessions,
+		authService:              authService,
+		paymentService:           paymentService,
+		adminService:             admin.NewService(pool),
+		apiKeyService:            apiKeyService,
+		usageService:             usageService,
+		omniRouteCfg:             cfg.OmniRoute,
+		usageSyncCfg:             cfg.UsageSyncWorker,
+		usageSyncExecutor:        usageSyncExecutor,
+		usageSyncStatus:          usageSyncStatus,
+		usageSyncWorker:          usageSyncWorker,
+		slaiPaymentCfg:           cfg.SLAIPayment,
+		storageDir:               cfg.Storage.Dir,
+		paymentProofMax:          int64(cfg.Storage.PaymentProofMaxMB) * 1024 * 1024,
+		paymentQRMax:             int64(cfg.Storage.PaymentQRMaxMB) * 1024 * 1024,
+		signupOTPCleanupInterval: cfg.Email.SignupOTPCleanupInterval,
 	}
 
 	mux := http.NewServeMux()
@@ -150,6 +193,9 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 	mux.HandleFunc("GET /readyz", server.readyz)
 	mux.HandleFunc("GET /", server.root)
 	mux.HandleFunc("POST /v1/auth/signup", server.signup)
+	mux.HandleFunc("POST /v1/auth/signup/verify", server.verifySignupEmail)
+	mux.HandleFunc("POST /v1/auth/password-reset/request", server.requestPasswordReset)
+	mux.HandleFunc("POST /v1/auth/password-reset/confirm", server.confirmPasswordReset)
 	mux.HandleFunc("POST /v1/auth/login", server.login)
 	mux.HandleFunc("POST /v1/auth/google", server.googleAuth)
 	mux.HandleFunc("POST /v1/auth/logout", server.logout)
@@ -220,6 +266,31 @@ func (s *Server) StartUsageSyncWorker(ctx context.Context) bool {
 	return s.usageSyncWorker.Start(ctx)
 }
 
+func (s *Server) StartSignupOTPCleanupWorker(ctx context.Context) bool {
+	if s == nil || s.signupOTPCleanupInterval <= 0 {
+		return false
+	}
+	go func() {
+		if err := s.authService.CleanupExpiredSignupOTPState(ctx); err != nil {
+			s.log.Warn("signup OTP cleanup failed", "error", err)
+		}
+
+		ticker := time.NewTicker(s.signupOTPCleanupInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := s.authService.CleanupExpiredSignupOTPState(ctx); err != nil {
+					s.log.Warn("signup OTP cleanup failed", "error", err)
+				}
+			}
+		}
+	}()
+	return true
+}
+
 func (s *Server) Shutdown(ctx context.Context) error {
 	if s.usageSyncWorker != nil {
 		s.usageSyncWorker.Stop(ctx)
@@ -269,14 +340,168 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, token, err := s.authService.Signup(r.Context(), req.Email, req.Password)
+	verification, err := s.authService.Signup(r.Context(), req.Email, req.Password, clientIP(r))
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "signup_failed", err)
+		if errors.Is(err, auth.ErrEmailDeliveryFailed) {
+			s.log.Warn("signup verification email delivery failed", "error", err)
+		}
+		writeSignupError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]any{"verification": verification})
+}
+
+func (s *Server) verifySignupEmail(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email string `json:"email"`
+		OTP   string `json:"otp"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	user, token, err := s.authService.VerifySignupEmailOTP(r.Context(), req.Email, req.OTP)
+	if err != nil {
+		writeSignupError(w, err)
 		return
 	}
 
 	s.sessions.SetCookie(w, token, time.Now().UTC().Add(s.sessionTTL))
 	writeJSON(w, http.StatusCreated, map[string]any{"user": user})
+}
+
+func (s *Server) requestPasswordReset(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email string `json:"email"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	verification, err := s.authService.RequestPasswordReset(r.Context(), req.Email, clientIP(r))
+	if err != nil {
+		if errors.Is(err, auth.ErrEmailDeliveryFailed) {
+			s.log.Warn("password reset email delivery failed", "error", err)
+		}
+		writePasswordResetError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]any{"verification": verification})
+}
+
+func (s *Server) confirmPasswordReset(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email    string `json:"email"`
+		OTP      string `json:"otp"`
+		Password string `json:"password"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	if err := s.authService.ResetPassword(r.Context(), req.Email, req.OTP, req.Password); err != nil {
+		writePasswordResetError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func writeSignupError(w http.ResponseWriter, err error) {
+	status := http.StatusBadRequest
+	code := "signup_failed"
+	messageErr := err
+	switch {
+	case errors.Is(err, auth.ErrEmailAlreadyRegistered):
+		status = http.StatusConflict
+		code = "email_already_registered"
+		messageErr = nil
+	case errors.Is(err, auth.ErrEmailDeliveryFailed):
+		status = http.StatusBadGateway
+		code = "email_delivery_failed"
+		messageErr = nil
+	case errors.Is(err, auth.ErrInvalidVerificationCode):
+		code = "invalid_verification_code"
+		messageErr = nil
+	case errors.Is(err, auth.ErrVerificationCodeExpired):
+		code = "verification_code_expired"
+		messageErr = nil
+	case errors.Is(err, auth.ErrTooManyOTPAttempts):
+		status = http.StatusTooManyRequests
+		code = "too_many_verification_attempts"
+		messageErr = nil
+	case errors.Is(err, auth.ErrTooManyOTPRequests):
+		status = http.StatusTooManyRequests
+		code = "too_many_verification_code_requests"
+		messageErr = nil
+	case errors.Is(err, auth.ErrOTPResendTooSoon):
+		status = http.StatusTooManyRequests
+		code = "verification_code_requested_too_soon"
+		messageErr = nil
+	}
+	var rateLimitErr auth.OTPRateLimitError
+	if errors.As(err, &rateLimitErr) && rateLimitErr.RetryAfter > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(int(rateLimitErr.RetryAfter.Seconds()+0.999)))
+	}
+	writeError(w, status, code, messageErr)
+}
+
+func writePasswordResetError(w http.ResponseWriter, err error) {
+	status := http.StatusBadRequest
+	code := "password_reset_failed"
+	messageErr := err
+	switch {
+	case errors.Is(err, auth.ErrEmailDeliveryFailed):
+		status = http.StatusBadGateway
+		code = "email_delivery_failed"
+		messageErr = nil
+	case errors.Is(err, auth.ErrInvalidVerificationCode):
+		code = "invalid_verification_code"
+		messageErr = nil
+	case errors.Is(err, auth.ErrVerificationCodeExpired):
+		code = "verification_code_expired"
+		messageErr = nil
+	case errors.Is(err, auth.ErrTooManyOTPAttempts):
+		status = http.StatusTooManyRequests
+		code = "too_many_verification_attempts"
+		messageErr = nil
+	case errors.Is(err, auth.ErrTooManyOTPRequests):
+		status = http.StatusTooManyRequests
+		code = "too_many_verification_code_requests"
+		messageErr = nil
+	case errors.Is(err, auth.ErrOTPResendTooSoon):
+		status = http.StatusTooManyRequests
+		code = "verification_code_requested_too_soon"
+		messageErr = nil
+	}
+	var rateLimitErr auth.OTPRateLimitError
+	if errors.As(err, &rateLimitErr) && rateLimitErr.RetryAfter > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(int(rateLimitErr.RetryAfter.Seconds()+0.999)))
+	}
+	writeError(w, status, code, messageErr)
+}
+
+func clientIP(r *http.Request) string {
+	for _, header := range []string{"CF-Connecting-IP", "X-Real-IP", "X-Forwarded-For"} {
+		value := strings.TrimSpace(r.Header.Get(header))
+		if value == "" {
+			continue
+		}
+		if header == "X-Forwarded-For" {
+			parts := strings.Split(value, ",")
+			if len(parts) > 0 {
+				return strings.TrimSpace(parts[0])
+			}
+		}
+		return value
+	}
+	host := strings.TrimSpace(r.RemoteAddr)
+	if remoteHost, _, err := net.SplitHostPort(host); err == nil {
+		return strings.Trim(remoteHost, "[]")
+	}
+	return host
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {

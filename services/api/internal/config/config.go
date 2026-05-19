@@ -27,6 +27,7 @@ type Config struct {
 	UsageSyncWorker   UsageSyncWorkerConfig
 	Storage           StorageConfig
 	SLAIPayment       SLAIPaymentConfig
+	Email             EmailConfig
 }
 
 type OmniRouteConfig struct {
@@ -61,6 +62,28 @@ type SLAIPaymentConfig struct {
 	MerchantPrefix  string
 	DefaultExpiry   time.Duration
 	HTTPTimeout     time.Duration
+}
+
+type EmailConfig struct {
+	SMTPHost                         string
+	SMTPPort                         int
+	SMTPUsername                     string
+	SMTPPassword                     string
+	SMTPFrom                         string
+	BrevoAPIKey                      string
+	BrevoAPIURL                      string
+	SendTimeout                      time.Duration
+	SignupOTPTTL                     time.Duration
+	SignupOTPResendCooldown          time.Duration
+	SignupOTPRequestWindow           time.Duration
+	SignupOTPMaxEmailRequests        int
+	SignupOTPMaxIPRequests           int
+	SignupOTPCleanupInterval         time.Duration
+	PasswordResetOTPTTL              time.Duration
+	PasswordResetOTPResendCooldown   time.Duration
+	PasswordResetOTPRequestWindow    time.Duration
+	PasswordResetOTPMaxEmailRequests int
+	PasswordResetOTPMaxIPRequests    int
 }
 
 func Load() (Config, error) {
@@ -133,6 +156,58 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	smtpPort, err := intFromEnv("SMTP_PORT", 587)
+	if err != nil {
+		return Config{}, err
+	}
+	signupOTPTTL, err := durationFromEnv("SIGNUP_OTP_TTL", 10*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	emailSendTimeout, err := durationFromEnv("EMAIL_SEND_TIMEOUT", 10*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	signupOTPResendCooldown, err := durationFromEnv("SIGNUP_OTP_RESEND_COOLDOWN", time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	signupOTPRequestWindow, err := durationFromEnv("SIGNUP_OTP_REQUEST_WINDOW", time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
+	signupOTPMaxEmailRequests, err := intFromEnv("SIGNUP_OTP_MAX_EMAIL_REQUESTS", 5)
+	if err != nil {
+		return Config{}, err
+	}
+	signupOTPMaxIPRequests, err := intFromEnv("SIGNUP_OTP_MAX_IP_REQUESTS", 20)
+	if err != nil {
+		return Config{}, err
+	}
+	signupOTPCleanupInterval, err := durationFromEnv("SIGNUP_OTP_CLEANUP_INTERVAL", 15*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	passwordResetOTPTTL, err := durationFromEnv("PASSWORD_RESET_OTP_TTL", 10*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	passwordResetOTPResendCooldown, err := durationFromEnv("PASSWORD_RESET_OTP_RESEND_COOLDOWN", time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	passwordResetOTPRequestWindow, err := durationFromEnv("PASSWORD_RESET_OTP_REQUEST_WINDOW", time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
+	passwordResetOTPMaxEmailRequests, err := intFromEnv("PASSWORD_RESET_OTP_MAX_EMAIL_REQUESTS", 5)
+	if err != nil {
+		return Config{}, err
+	}
+	passwordResetOTPMaxIPRequests, err := intFromEnv("PASSWORD_RESET_OTP_MAX_IP_REQUESTS", 20)
+	if err != nil {
+		return Config{}, err
+	}
 
 	cfg := Config{
 		AppEnv:            stringFromEnv("APP_ENV", "development"),
@@ -180,6 +255,27 @@ func Load() (Config, error) {
 			DefaultExpiry:   slaiPaymentDefaultExpiry,
 			HTTPTimeout:     slaiPaymentHTTPTimeout,
 		},
+		Email: EmailConfig{
+			SMTPHost:                         stringFromEnv("SMTP_HOST", ""),
+			SMTPPort:                         smtpPort,
+			SMTPUsername:                     stringFromEnv("SMTP_USERNAME", ""),
+			SMTPPassword:                     stringFromEnv("SMTP_PASSWORD", ""),
+			SMTPFrom:                         stringFromEnv("EMAIL_FROM", stringFromEnv("SMTP_FROM", "")),
+			BrevoAPIKey:                      stringFromEnv("BREVO_API_KEY", ""),
+			BrevoAPIURL:                      stringFromEnv("BREVO_API_URL", "https://api.brevo.com/v3/smtp/email"),
+			SendTimeout:                      emailSendTimeout,
+			SignupOTPTTL:                     signupOTPTTL,
+			SignupOTPResendCooldown:          signupOTPResendCooldown,
+			SignupOTPRequestWindow:           signupOTPRequestWindow,
+			SignupOTPMaxEmailRequests:        signupOTPMaxEmailRequests,
+			SignupOTPMaxIPRequests:           signupOTPMaxIPRequests,
+			SignupOTPCleanupInterval:         signupOTPCleanupInterval,
+			PasswordResetOTPTTL:              passwordResetOTPTTL,
+			PasswordResetOTPResendCooldown:   passwordResetOTPResendCooldown,
+			PasswordResetOTPRequestWindow:    passwordResetOTPRequestWindow,
+			PasswordResetOTPMaxEmailRequests: passwordResetOTPMaxEmailRequests,
+			PasswordResetOTPMaxIPRequests:    passwordResetOTPMaxIPRequests,
+		},
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -210,6 +306,48 @@ func Load() (Config, error) {
 	}
 	if cfg.SLAIPayment.HTTPTimeout <= 0 {
 		cfg.SLAIPayment.HTTPTimeout = 10 * time.Second
+	}
+	if cfg.Email.SMTPPort <= 0 {
+		cfg.Email.SMTPPort = 587
+	}
+	if cfg.Email.SignupOTPTTL <= 0 {
+		cfg.Email.SignupOTPTTL = 10 * time.Minute
+	}
+	if cfg.Email.SendTimeout <= 0 {
+		cfg.Email.SendTimeout = 10 * time.Second
+	}
+	if cfg.Email.SignupOTPResendCooldown <= 0 {
+		cfg.Email.SignupOTPResendCooldown = time.Minute
+	}
+	if cfg.Email.SignupOTPRequestWindow <= 0 {
+		cfg.Email.SignupOTPRequestWindow = time.Hour
+	}
+	if cfg.Email.SignupOTPMaxEmailRequests <= 0 {
+		cfg.Email.SignupOTPMaxEmailRequests = 5
+	}
+	if cfg.Email.SignupOTPMaxIPRequests <= 0 {
+		cfg.Email.SignupOTPMaxIPRequests = 20
+	}
+	if cfg.Email.SignupOTPCleanupInterval <= 0 {
+		cfg.Email.SignupOTPCleanupInterval = 15 * time.Minute
+	}
+	if cfg.Email.PasswordResetOTPTTL <= 0 {
+		cfg.Email.PasswordResetOTPTTL = 10 * time.Minute
+	}
+	if cfg.Email.PasswordResetOTPResendCooldown <= 0 {
+		cfg.Email.PasswordResetOTPResendCooldown = time.Minute
+	}
+	if cfg.Email.PasswordResetOTPRequestWindow <= 0 {
+		cfg.Email.PasswordResetOTPRequestWindow = time.Hour
+	}
+	if cfg.Email.PasswordResetOTPMaxEmailRequests <= 0 {
+		cfg.Email.PasswordResetOTPMaxEmailRequests = 5
+	}
+	if cfg.Email.PasswordResetOTPMaxIPRequests <= 0 {
+		cfg.Email.PasswordResetOTPMaxIPRequests = 20
+	}
+	if (cfg.Email.SMTPHost != "" || cfg.Email.BrevoAPIKey != "") && cfg.Email.SMTPFrom == "" {
+		return Config{}, fmt.Errorf("EMAIL_FROM or SMTP_FROM is required when email delivery is configured")
 	}
 	if cfg.OmniRoute.Enabled {
 		if cfg.OmniRoute.BaseURL == "" {

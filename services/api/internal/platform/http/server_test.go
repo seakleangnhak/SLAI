@@ -69,29 +69,54 @@ func TestMain(m *testing.M) {
 func TestSignupLoginSessionAuthAndLogout(t *testing.T) {
 	requireDB(t)
 	truncateTables(t)
-	client := newTestClient(t)
+	emailSender := &captureEmailSender{otps: map[string]string{}}
+	client := newTestClientWithEmailSender(t, emailSender)
 
 	signup := client.post(t, "/v1/auth/signup", map[string]any{
 		"email":    "Developer@Example.com",
 		"password": "correct-password",
 	}, nil)
-	assertStatus(t, signup, http.StatusCreated)
-	if got := stringField(t, signup.JSON, "user.email"); got != "developer@example.com" {
+	assertStatus(t, signup, http.StatusAccepted)
+	if got := stringField(t, signup.JSON, "verification.email"); got != "developer@example.com" {
 		t.Fatalf("email = %q", got)
 	}
-	if len(signup.Cookies()) == 0 {
-		t.Fatal("expected session cookie on signup")
+	if len(signup.Cookies()) != 0 {
+		t.Fatal("did not expect a session cookie before email verification")
 	}
 
-	me := client.get(t, "/v1/me", signup.Cookies())
+	loginBeforeVerification := client.post(t, "/v1/auth/login", map[string]any{
+		"email":    "developer@example.com",
+		"password": "correct-password",
+	}, nil)
+	assertStatus(t, loginBeforeVerification, http.StatusUnauthorized)
+
+	badVerify := client.post(t, "/v1/auth/signup/verify", map[string]any{
+		"email": "developer@example.com",
+		"otp":   "000000",
+	}, nil)
+	assertStatus(t, badVerify, http.StatusBadRequest)
+
+	verify := client.post(t, "/v1/auth/signup/verify", map[string]any{
+		"email": "Developer@Example.com",
+		"otp":   emailSender.otps["developer@example.com"],
+	}, nil)
+	assertStatus(t, verify, http.StatusCreated)
+	if got := stringField(t, verify.JSON, "user.email"); got != "developer@example.com" {
+		t.Fatalf("email = %q", got)
+	}
+	if len(verify.Cookies()) == 0 {
+		t.Fatal("expected session cookie after verification")
+	}
+
+	me := client.get(t, "/v1/me", verify.Cookies())
 	assertStatus(t, me, http.StatusOK)
 	if got := stringField(t, me.JSON, "user.role"); got != users.RoleUser {
 		t.Fatalf("role = %q", got)
 	}
 
-	logout := client.post(t, "/v1/auth/logout", map[string]any{}, signup.Cookies())
+	logout := client.post(t, "/v1/auth/logout", map[string]any{}, verify.Cookies())
 	assertStatus(t, logout, http.StatusOK)
-	meAfterLogout := client.get(t, "/v1/me", signup.Cookies())
+	meAfterLogout := client.get(t, "/v1/me", verify.Cookies())
 	assertStatus(t, meAfterLogout, http.StatusUnauthorized)
 
 	login := client.post(t, "/v1/auth/login", map[string]any{
@@ -105,6 +130,180 @@ func TestSignupLoginSessionAuthAndLogout(t *testing.T) {
 		"password": "wrong-password",
 	}, nil)
 	assertStatus(t, badLogin, http.StatusUnauthorized)
+}
+
+func TestSignupOTPRateLimitsResendAndIP(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	emailSender := &captureEmailSender{otps: map[string]string{}, counts: map[string]int{}}
+	client := newTestClientWithEmailSenderAndEmailConfig(t, emailSender, config.EmailConfig{
+		SignupOTPResendCooldown:   time.Hour,
+		SignupOTPRequestWindow:    time.Hour,
+		SignupOTPMaxEmailRequests: 3,
+		SignupOTPMaxIPRequests:    2,
+	})
+
+	first := client.postWithHeaders(t, "/v1/auth/signup", map[string]any{
+		"email":    "limited@example.com",
+		"password": "correct-password",
+	}, nil, map[string]string{"X-Forwarded-For": "203.0.113.10"})
+	assertStatus(t, first, http.StatusAccepted)
+
+	resend := client.postWithHeaders(t, "/v1/auth/signup", map[string]any{
+		"email":    "limited@example.com",
+		"password": "correct-password",
+	}, nil, map[string]string{"X-Forwarded-For": "203.0.113.10"})
+	assertStatus(t, resend, http.StatusTooManyRequests)
+	if got := stringField(t, resend.JSON, "error"); got != "verification_code_requested_too_soon" {
+		t.Fatalf("resend error = %q", got)
+	}
+	if retryAfter := resend.Header.Get("Retry-After"); retryAfter == "" {
+		t.Fatal("expected Retry-After header")
+	}
+	if emailSender.counts["limited@example.com"] != 1 {
+		t.Fatalf("limited@example.com email count = %d", emailSender.counts["limited@example.com"])
+	}
+
+	secondEmail := client.postWithHeaders(t, "/v1/auth/signup", map[string]any{
+		"email":    "second@example.com",
+		"password": "correct-password",
+	}, nil, map[string]string{"X-Forwarded-For": "203.0.113.10"})
+	assertStatus(t, secondEmail, http.StatusAccepted)
+
+	thirdEmail := client.postWithHeaders(t, "/v1/auth/signup", map[string]any{
+		"email":    "third@example.com",
+		"password": "correct-password",
+	}, nil, map[string]string{"X-Forwarded-For": "203.0.113.10"})
+	assertStatus(t, thirdEmail, http.StatusTooManyRequests)
+	if got := stringField(t, thirdEmail.JSON, "error"); got != "too_many_verification_code_requests" {
+		t.Fatalf("ip limit error = %q", got)
+	}
+	if emailSender.counts["third@example.com"] != 0 {
+		t.Fatalf("third@example.com email count = %d", emailSender.counts["third@example.com"])
+	}
+}
+
+func TestPasswordResetOTPFlow(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	emailSender := &captureEmailSender{passwordResetOTPs: map[string]string{}, passwordResetCounts: map[string]int{}}
+	client := newTestClientWithEmailSender(t, emailSender)
+	user := createUser(t, "reset@example.com", users.RoleUser)
+	existingCookies := loginCookies(t, client, user.Email)
+
+	request := client.post(t, "/v1/auth/password-reset/request", map[string]any{
+		"email": "Reset@Example.com",
+	}, nil)
+	assertStatus(t, request, http.StatusAccepted)
+	if got := stringField(t, request.JSON, "verification.email"); got != "reset@example.com" {
+		t.Fatalf("email = %q", got)
+	}
+	if emailSender.passwordResetCounts["reset@example.com"] != 1 {
+		t.Fatalf("reset email count = %d", emailSender.passwordResetCounts["reset@example.com"])
+	}
+
+	badConfirm := client.post(t, "/v1/auth/password-reset/confirm", map[string]any{
+		"email":    "reset@example.com",
+		"otp":      "000000",
+		"password": "new-password",
+	}, nil)
+	assertStatus(t, badConfirm, http.StatusBadRequest)
+
+	confirm := client.post(t, "/v1/auth/password-reset/confirm", map[string]any{
+		"email":    "Reset@Example.com",
+		"otp":      emailSender.passwordResetOTPs["reset@example.com"],
+		"password": "new-password",
+	}, nil)
+	assertStatus(t, confirm, http.StatusOK)
+
+	meWithOldSession := client.get(t, "/v1/me", existingCookies)
+	assertStatus(t, meWithOldSession, http.StatusUnauthorized)
+
+	oldLogin := client.post(t, "/v1/auth/login", map[string]any{
+		"email":    "reset@example.com",
+		"password": "correct-password",
+	}, nil)
+	assertStatus(t, oldLogin, http.StatusUnauthorized)
+
+	newLogin := client.post(t, "/v1/auth/login", map[string]any{
+		"email":    "reset@example.com",
+		"password": "new-password",
+	}, nil)
+	assertStatus(t, newLogin, http.StatusOK)
+}
+
+func TestPasswordResetRequestDoesNotEnumerateUsers(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	emailSender := &captureEmailSender{passwordResetCounts: map[string]int{}}
+	client := newTestClientWithEmailSender(t, emailSender)
+
+	unknown := client.post(t, "/v1/auth/password-reset/request", map[string]any{
+		"email": "missing@example.com",
+	}, nil)
+	assertStatus(t, unknown, http.StatusAccepted)
+	if emailSender.passwordResetCounts["missing@example.com"] != 0 {
+		t.Fatalf("missing@example.com reset email count = %d", emailSender.passwordResetCounts["missing@example.com"])
+	}
+
+	createGoogleUser(t, "google@example.com", "google-subject")
+	googleOnly := client.post(t, "/v1/auth/password-reset/request", map[string]any{
+		"email": "google@example.com",
+	}, nil)
+	assertStatus(t, googleOnly, http.StatusAccepted)
+	if emailSender.passwordResetCounts["google@example.com"] != 0 {
+		t.Fatalf("google@example.com reset email count = %d", emailSender.passwordResetCounts["google@example.com"])
+	}
+}
+
+func TestPasswordResetOTPRateLimitsResendAndIP(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	emailSender := &captureEmailSender{passwordResetOTPs: map[string]string{}, passwordResetCounts: map[string]int{}}
+	client := newTestClientWithEmailSenderAndEmailConfig(t, emailSender, config.EmailConfig{
+		PasswordResetOTPResendCooldown:   time.Hour,
+		PasswordResetOTPRequestWindow:    time.Hour,
+		PasswordResetOTPMaxEmailRequests: 3,
+		PasswordResetOTPMaxIPRequests:    2,
+	})
+	createUser(t, "limited@example.com", users.RoleUser)
+	createUser(t, "second@example.com", users.RoleUser)
+	createUser(t, "third@example.com", users.RoleUser)
+
+	first := client.postWithHeaders(t, "/v1/auth/password-reset/request", map[string]any{
+		"email": "limited@example.com",
+	}, nil, map[string]string{"X-Forwarded-For": "203.0.113.20"})
+	assertStatus(t, first, http.StatusAccepted)
+
+	resend := client.postWithHeaders(t, "/v1/auth/password-reset/request", map[string]any{
+		"email": "limited@example.com",
+	}, nil, map[string]string{"X-Forwarded-For": "203.0.113.20"})
+	assertStatus(t, resend, http.StatusTooManyRequests)
+	if got := stringField(t, resend.JSON, "error"); got != "verification_code_requested_too_soon" {
+		t.Fatalf("resend error = %q", got)
+	}
+	if retryAfter := resend.Header.Get("Retry-After"); retryAfter == "" {
+		t.Fatal("expected Retry-After header")
+	}
+	if emailSender.passwordResetCounts["limited@example.com"] != 1 {
+		t.Fatalf("limited@example.com reset email count = %d", emailSender.passwordResetCounts["limited@example.com"])
+	}
+
+	second := client.postWithHeaders(t, "/v1/auth/password-reset/request", map[string]any{
+		"email": "second@example.com",
+	}, nil, map[string]string{"X-Forwarded-For": "203.0.113.20"})
+	assertStatus(t, second, http.StatusAccepted)
+
+	third := client.postWithHeaders(t, "/v1/auth/password-reset/request", map[string]any{
+		"email": "third@example.com",
+	}, nil, map[string]string{"X-Forwarded-For": "203.0.113.20"})
+	assertStatus(t, third, http.StatusTooManyRequests)
+	if got := stringField(t, third.JSON, "error"); got != "too_many_verification_code_requests" {
+		t.Fatalf("ip limit error = %q", got)
+	}
+	if emailSender.passwordResetCounts["third@example.com"] != 0 {
+		t.Fatalf("third@example.com reset email count = %d", emailSender.passwordResetCounts["third@example.com"])
+	}
 }
 
 func TestGoogleAuthCreatesLinksAndLogsInUser(t *testing.T) {
@@ -1514,6 +1713,47 @@ func newTestClient(t *testing.T) testClient {
 	}
 }
 
+func newTestClientWithEmailSender(t *testing.T, sender auth.EmailSender) testClient {
+	return newTestClientWithEmailSenderAndEmailConfig(t, sender, config.EmailConfig{})
+}
+
+func newTestClientWithEmailSenderAndEmailConfig(t *testing.T, sender auth.EmailSender, emailCfg config.EmailConfig) testClient {
+	t.Helper()
+	server := httpserver.NewServer(httpserver.ServerConfig{
+		Addr:             ":0",
+		ReadinessTimeout: time.Second,
+		SessionSecret:    "test-secret",
+		CookieSecure:     false,
+		SessionTTL:       time.Hour,
+		APIKeyPepper:     "test-api-key-pepper",
+		APIKeyPrefix:     "sk_slai",
+		OmniRoute: config.OmniRouteConfig{
+			Enabled:       false,
+			UsageSyncMode: "call_logs",
+			CallLogLimit:  100,
+		},
+		UsageSyncWorker: config.UsageSyncWorkerConfig{
+			Enabled:    false,
+			Interval:   60 * time.Second,
+			LockKey:    "slai_usage_sync",
+			BatchLimit: 100,
+			StartDelay: 10 * time.Second,
+		},
+		Storage: config.StorageConfig{
+			Dir:               t.TempDir(),
+			PaymentProofMaxMB: 5,
+			PaymentQRMaxMB:    2,
+		},
+		Email:       emailCfg,
+		EmailSender: sender,
+	}, testDB, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	return testClient{
+		server: httptest.NewServer(server),
+		client: &http.Client{},
+	}
+}
+
 func newTestClientWithOmniRoute(t *testing.T) testClient {
 	t.Helper()
 	server := httpserver.NewServer(httpserver.ServerConfig{
@@ -1639,6 +1879,37 @@ type fakeSLAIPaymentClient struct {
 type fakeGoogleVerifier struct {
 	identities map[string]auth.GoogleIdentity
 	err        error
+}
+
+type captureEmailSender struct {
+	otps                map[string]string
+	counts              map[string]int
+	passwordResetOTPs   map[string]string
+	passwordResetCounts map[string]int
+}
+
+func (s *captureEmailSender) SendSignupOTP(_ context.Context, email, otp string, _ time.Time) error {
+	if s.otps == nil {
+		s.otps = map[string]string{}
+	}
+	if s.counts == nil {
+		s.counts = map[string]int{}
+	}
+	s.otps[email] = otp
+	s.counts[email]++
+	return nil
+}
+
+func (s *captureEmailSender) SendPasswordResetOTP(_ context.Context, email, otp string, _ time.Time) error {
+	if s.passwordResetOTPs == nil {
+		s.passwordResetOTPs = map[string]string{}
+	}
+	if s.passwordResetCounts == nil {
+		s.passwordResetCounts = map[string]int{}
+	}
+	s.passwordResetOTPs[email] = otp
+	s.passwordResetCounts[email]++
+	return nil
 }
 
 func (v *fakeGoogleVerifier) VerifyGoogleIDToken(_ context.Context, credential string) (auth.GoogleIdentity, error) {
@@ -1874,6 +2145,26 @@ func createUser(t *testing.T, email, role string) users.User {
 	return created
 }
 
+func createGoogleUser(t *testing.T, email, googleSubject string) users.User {
+	t.Helper()
+	var created users.User
+	err := platformdb.InTx(context.Background(), testDB, func(tx pgx.Tx) error {
+		user, err := users.NewRepository(tx).CreateGoogle(context.Background(), email, googleSubject, users.RoleUser)
+		if err != nil {
+			return err
+		}
+		if err := ledger.NewService(tx).EnsureBalance(context.Background(), user.ID); err != nil {
+			return err
+		}
+		created = user
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return created
+}
+
 func loginCookies(t *testing.T, client testClient, email string) []*http.Cookie {
 	t.Helper()
 	resp := client.post(t, "/v1/auth/login", map[string]any{"email": email, "password": "correct-password"}, nil)
@@ -1884,7 +2175,7 @@ func loginCookies(t *testing.T, client testClient, email string) []*http.Cookie 
 func truncateTables(t *testing.T) {
 	t.Helper()
 	_, err := testDB.Exec(context.Background(), `
-		TRUNCATE admin_audit_logs, credit_ledger_entries, payment_proofs, payments, credit_balances, sessions, credit_packages, users
+		TRUNCATE admin_audit_logs, credit_ledger_entries, payment_proofs, payments, credit_balances, sessions, password_reset_otp_rate_limits, password_reset_otps, signup_otp_rate_limits, signup_email_verifications, credit_packages, users
 		RESTART IDENTITY CASCADE
 	`)
 	if err != nil {

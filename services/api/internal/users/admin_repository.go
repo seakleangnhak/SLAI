@@ -167,7 +167,7 @@ func (r AdminRepository) UpdateStatus(ctx context.Context, id, status string) (p
 			UPDATE users
 			SET status = $2
 			WHERE id = $1
-			RETURNING id::text, email, COALESCE(password_hash, ''), role, status, auth_provider, COALESCE(google_subject, ''), balance_policy, created_at, updated_at
+			RETURNING id::text, email, COALESCE(password_hash, '') AS password_hash, role, status, auth_provider, COALESCE(google_subject, '') AS google_subject, balance_policy, created_at, updated_at
 		)
 		SELECT previous.status, updated.id, updated.email, updated.password_hash, updated.role, updated.status,
 		       updated.auth_provider, updated.google_subject, updated.balance_policy, updated.created_at, updated.updated_at

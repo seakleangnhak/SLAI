@@ -492,7 +492,7 @@ func assertKeyStatus(t *testing.T, keyID string, status string) {
 func truncateTables(t *testing.T) {
 	t.Helper()
 	_, err := testDB.Exec(context.Background(), `
-		TRUNCATE omniroute_sync_state, usage_events, api_keys, admin_audit_logs, credit_ledger_entries, payments, credit_balances, sessions, credit_packages, users
+		TRUNCATE omniroute_sync_state, usage_events, api_keys, admin_audit_logs, credit_ledger_entries, payments, credit_balances, sessions, signup_otp_rate_limits, signup_email_verifications, credit_packages, users
 		RESTART IDENTITY CASCADE
 	`)
 	if err != nil {

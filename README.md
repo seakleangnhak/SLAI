@@ -31,7 +31,7 @@ Implemented now:
 - PostgreSQL connection and readiness checks
 - SQL migration runner
 - Structured logging
-- Email/password and Google signup and login
+- Email/password signup with email OTP verification, plus Google signup and login
 - Argon2id password hashing
 - HttpOnly session cookies
 - USER and ADMIN roles
@@ -179,6 +179,26 @@ Core settings:
 - `COOKIE_SECURE`
 - `SESSION_TTL`
 - `GOOGLE_CLIENT_ID`
+- `BREVO_API_KEY`
+- `BREVO_API_URL`
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USERNAME`
+- `SMTP_PASSWORD`
+- `EMAIL_FROM`
+- `SMTP_FROM`
+- `EMAIL_SEND_TIMEOUT`
+- `SIGNUP_OTP_TTL`
+- `SIGNUP_OTP_RESEND_COOLDOWN`
+- `SIGNUP_OTP_REQUEST_WINDOW`
+- `SIGNUP_OTP_MAX_EMAIL_REQUESTS`
+- `SIGNUP_OTP_MAX_IP_REQUESTS`
+- `SIGNUP_OTP_CLEANUP_INTERVAL`
+- `PASSWORD_RESET_OTP_TTL`
+- `PASSWORD_RESET_OTP_RESEND_COOLDOWN`
+- `PASSWORD_RESET_OTP_REQUEST_WINDOW`
+- `PASSWORD_RESET_OTP_MAX_EMAIL_REQUESTS`
+- `PASSWORD_RESET_OTP_MAX_IP_REQUESTS`
 - `ADMIN_SEED_EMAIL`
 - `ADMIN_SEED_PASSWORD`
 - `SLAI_AUTO_MIGRATE`
@@ -226,6 +246,28 @@ Automatic Bakong KHQR checkout settings:
 - `SLAI_PAYMENT_MERCHANT_PREFIX` is passed to slai-payment when creating KHQR payments.
 - `SLAI_PAYMENT_DEFAULT_EXPIRY` controls checkout expiry, for example `30m`.
 - `SLAI_PAYMENT_HTTP_TIMEOUT` controls outbound provider calls.
+
+Email OTP signup settings:
+
+- `BREVO_API_KEY` enables Brevo HTTP API delivery over port 443 and takes precedence over SMTP.
+- `BREVO_API_URL` defaults to `https://api.brevo.com/v3/smtp/email`.
+- `EMAIL_FROM` is the preferred verified sender address. `SMTP_FROM` remains supported for backward compatibility.
+- `SMTP_HOST` enables SMTP delivery only when `BREVO_API_KEY` is empty.
+- `SMTP_PORT` defaults to `587`.
+- `SMTP_USERNAME` and `SMTP_PASSWORD` are optional when the SMTP relay does not require authentication.
+- `EMAIL_SEND_TIMEOUT` controls the outbound email send timeout, for example `10s`.
+- `SIGNUP_OTP_TTL` controls how long signup verification codes remain valid, for example `10m`.
+- `SIGNUP_OTP_RESEND_COOLDOWN` controls how soon the same email can request another code, for example `1m`.
+- `SIGNUP_OTP_REQUEST_WINDOW` controls the rolling request limit window, for example `1h`.
+- `SIGNUP_OTP_MAX_EMAIL_REQUESTS` limits code sends per email within the request window.
+- `SIGNUP_OTP_MAX_IP_REQUESTS` limits code sends per client IP within the request window.
+- `SIGNUP_OTP_CLEANUP_INTERVAL` controls how often expired pending signup OTPs and stale OTP rate-limit rows are removed.
+- `PASSWORD_RESET_OTP_TTL` controls how long password reset codes remain valid, for example `10m`.
+- `PASSWORD_RESET_OTP_RESEND_COOLDOWN` controls how soon the same email can request another password reset code.
+- `PASSWORD_RESET_OTP_REQUEST_WINDOW` controls the password reset request limit window.
+- `PASSWORD_RESET_OTP_MAX_EMAIL_REQUESTS` limits password reset code sends per email within the request window.
+- `PASSWORD_RESET_OTP_MAX_IP_REQUESTS` limits password reset code sends per client IP within the request window.
+- When neither `BREVO_API_KEY` nor `SMTP_HOST` is set, the API logs generated signup and password reset OTPs for local development.
 
 Frontend settings live in `apps/web/.env.example`:
 
@@ -532,6 +574,9 @@ Public and authenticated endpoints:
 - `GET /healthz`
 - `GET /readyz`
 - `POST /v1/auth/signup`
+- `POST /v1/auth/signup/verify`
+- `POST /v1/auth/password-reset/request`
+- `POST /v1/auth/password-reset/confirm`
 - `POST /v1/auth/login`
 - `POST /v1/auth/google`
 - `POST /v1/auth/logout`
