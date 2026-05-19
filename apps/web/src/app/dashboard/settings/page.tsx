@@ -60,6 +60,7 @@ function RuleItem({ title, text, tone = "blue" }: { title: string; text: string;
 
 function AccountProfileCard({ user }: { user: User }) {
   const policy = balancePolicyDisplay(user.balancePolicy);
+  const authProvider = user.authProvider === "google" ? "Google account" : "Email and password";
 
   return (
     <Card className="rounded-2xl p-5">
@@ -83,7 +84,7 @@ function AccountProfileCard({ user }: { user: User }) {
       <dl className="mt-4 grid gap-3 sm:grid-cols-2">
         <DetailCard label="Role" value={user.role === "ADMIN" ? "Administrator" : "User"} />
         <DetailCard label="Status" value={user.status === "ACTIVE" ? "Active" : "Suspended"} />
-        <DetailCard label="Account type" value="Developer account" />
+        <DetailCard label="Sign-in method" value={authProvider} />
         <DetailCard label="User ID" value={truncateId(user.id, 10, 4)} mono />
         <DetailCard label="Created" value={formatDateTime(user.createdAt)} />
         <DetailCard label="Updated" value={formatDateTime(user.updatedAt)} />

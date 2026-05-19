@@ -107,6 +107,65 @@ func TestSignupLoginSessionAuthAndLogout(t *testing.T) {
 	assertStatus(t, badLogin, http.StatusUnauthorized)
 }
 
+func TestGoogleAuthCreatesLinksAndLogsInUser(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	verifier := &fakeGoogleVerifier{
+		identities: map[string]auth.GoogleIdentity{
+			"new-user-token": {
+				Subject:       "google-subject-new",
+				Email:         "GoogleUser@Example.com",
+				EmailVerified: true,
+			},
+			"existing-user-token": {
+				Subject:       "google-subject-existing",
+				Email:         "developer@example.com",
+				EmailVerified: true,
+			},
+		},
+	}
+	client := newTestClientWithGoogle(t, verifier)
+
+	created := client.post(t, "/v1/auth/google", map[string]any{"credential": "new-user-token"}, nil)
+	assertStatus(t, created, http.StatusOK)
+	if got := stringField(t, created.JSON, "user.email"); got != "googleuser@example.com" {
+		t.Fatalf("email = %q", got)
+	}
+	if got := stringField(t, created.JSON, "user.authProvider"); got != users.AuthProviderGoogle {
+		t.Fatalf("authProvider = %q", got)
+	}
+	me := client.get(t, "/v1/me", created.Cookies())
+	assertStatus(t, me, http.StatusOK)
+
+	passwordUser := createUser(t, "developer@example.com", users.RoleUser)
+	linked := client.post(t, "/v1/auth/google", map[string]any{"credential": "existing-user-token"}, nil)
+	assertStatus(t, linked, http.StatusOK)
+	if got := stringField(t, linked.JSON, "user.id"); got != passwordUser.ID {
+		t.Fatalf("linked id = %q, want %q", got, passwordUser.ID)
+	}
+	if got := stringField(t, linked.JSON, "user.authProvider"); got != users.AuthProviderPassword {
+		t.Fatalf("authProvider = %q", got)
+	}
+}
+
+func TestGoogleAuthRejectsInvalidOrDisabledCredential(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	disabledClient := newTestClient(t)
+	disabled := disabledClient.post(t, "/v1/auth/google", map[string]any{"credential": "token"}, nil)
+	assertStatus(t, disabled, http.StatusServiceUnavailable)
+	if got := stringField(t, disabled.JSON, "error"); got != "google_auth_not_configured" {
+		t.Fatalf("error = %q", got)
+	}
+
+	client := newTestClientWithGoogle(t, &fakeGoogleVerifier{err: auth.ErrInvalidGoogleToken})
+	invalid := client.post(t, "/v1/auth/google", map[string]any{"credential": "bad-token"}, nil)
+	assertStatus(t, invalid, http.StatusUnauthorized)
+	if got := stringField(t, invalid.JSON, "error"); got != "invalid_google_credential" {
+		t.Fatalf("error = %q", got)
+	}
+}
+
 func TestAdminOnlyAccessAndPackageCreation(t *testing.T) {
 	requireDB(t)
 	truncateTables(t)
@@ -278,6 +337,9 @@ func TestAdminUsersListRequiresAdminAndSupportsFilters(t *testing.T) {
 	if got := item["email"]; got != developer.Email {
 		t.Fatalf("email = %#v", got)
 	}
+	if got := item["auth_provider"]; got != users.AuthProviderPassword {
+		t.Fatalf("auth_provider = %#v", got)
+	}
 	if got := item["balance_units"]; got != float64(5000) {
 		t.Fatalf("balance_units = %#v", got)
 	}
@@ -337,6 +399,9 @@ func TestAdminUserDetailDoesNotExposeSecretsAndIncludesRelatedData(t *testing.T)
 	}
 	if got := stringField(t, detail.JSON, "email"); got != user.Email {
 		t.Fatalf("email = %q", got)
+	}
+	if got := stringField(t, detail.JSON, "auth_provider"); got != users.AuthProviderPassword {
+		t.Fatalf("auth_provider = %q", got)
 	}
 	if got := numberField(t, detail.JSON, "balance.lifetime_purchased_units"); got != 2500000000 {
 		t.Fatalf("lifetime_purchased_units = %v", got)
@@ -1485,6 +1550,42 @@ func newTestClientWithOmniRoute(t *testing.T) testClient {
 	}
 }
 
+func newTestClientWithGoogle(t *testing.T, verifier auth.GoogleIdentityVerifier) testClient {
+	t.Helper()
+	server := httpserver.NewServer(httpserver.ServerConfig{
+		Addr:             ":0",
+		ReadinessTimeout: time.Second,
+		SessionSecret:    "test-secret",
+		CookieSecure:     false,
+		SessionTTL:       time.Hour,
+		GoogleVerifier:   verifier,
+		APIKeyPepper:     "test-api-key-pepper",
+		APIKeyPrefix:     "sk_slai",
+		OmniRoute: config.OmniRouteConfig{
+			Enabled:       false,
+			UsageSyncMode: "call_logs",
+			CallLogLimit:  100,
+		},
+		UsageSyncWorker: config.UsageSyncWorkerConfig{
+			Enabled:    false,
+			Interval:   60 * time.Second,
+			LockKey:    "slai_usage_sync",
+			BatchLimit: 100,
+			StartDelay: 10 * time.Second,
+		},
+		Storage: config.StorageConfig{
+			Dir:               t.TempDir(),
+			PaymentProofMaxMB: 5,
+			PaymentQRMaxMB:    2,
+		},
+	}, testDB, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	return testClient{
+		server: httptest.NewServer(server),
+		client: &http.Client{},
+	}
+}
+
 func newTestClientWithSLAIPayment(t *testing.T, paymentClient slaipayment.Client, callbackSecret string) testClient {
 	t.Helper()
 	server := httpserver.NewServer(httpserver.ServerConfig{
@@ -1533,6 +1634,22 @@ func newTestClientWithSLAIPayment(t *testing.T, paymentClient slaipayment.Client
 type fakeSLAIPaymentClient struct {
 	created  []slaipayment.CreatePaymentInput
 	payments map[string]slaipayment.Payment
+}
+
+type fakeGoogleVerifier struct {
+	identities map[string]auth.GoogleIdentity
+	err        error
+}
+
+func (v *fakeGoogleVerifier) VerifyGoogleIDToken(_ context.Context, credential string) (auth.GoogleIdentity, error) {
+	if v.err != nil {
+		return auth.GoogleIdentity{}, v.err
+	}
+	identity, ok := v.identities[credential]
+	if !ok {
+		return auth.GoogleIdentity{}, auth.ErrInvalidGoogleToken
+	}
+	return identity, nil
 }
 
 func newFakeSLAIPaymentClient() *fakeSLAIPaymentClient {

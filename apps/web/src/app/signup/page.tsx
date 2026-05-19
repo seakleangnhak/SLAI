@@ -6,10 +6,12 @@ import { FormEvent, useState } from "react";
 
 import {
   AuthCard,
+  AuthDivider,
   AuthErrorAlert,
   AuthInput,
   AuthPageShell,
   AuthPasswordInput,
+  GoogleAuthButton,
   SecurityNote,
 } from "@/components/AuthPage";
 import { Button } from "@/components/Button";
@@ -49,6 +51,20 @@ export default function SignupPage() {
     }
   }
 
+  async function continueWithGoogle(credential: string) {
+    setLoading(true);
+    setError(null);
+    try {
+      await api.auth.google(credential);
+      router.push("/dashboard");
+      router.refresh();
+    } catch (err) {
+      setError(readableError(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <AuthPageShell>
       <AuthCard
@@ -76,8 +92,16 @@ export default function SignupPage() {
           </>
         }
       >
-        <form className="mt-7 space-y-5" onSubmit={submit} noValidate>
+        <div className="mt-7 space-y-5">
           {error ? <AuthErrorAlert message={error} /> : null}
+          <GoogleAuthButton
+            label="Sign up with Google"
+            onCredential={continueWithGoogle}
+            onError={setError}
+          />
+          <AuthDivider />
+        </div>
+        <form className="mt-5 space-y-5" onSubmit={submit} noValidate>
           <AuthInput
             autoComplete="email"
             disabled={loading}

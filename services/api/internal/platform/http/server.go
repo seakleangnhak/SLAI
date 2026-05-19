@@ -41,6 +41,7 @@ type ServerConfig struct {
 	SessionSecret     string
 	CookieSecure      bool
 	SessionTTL        time.Duration
+	GoogleClientID    string
 	APIKeyPepper      string
 	APIKeyPrefix      string
 	OmniRoute         config.OmniRouteConfig
@@ -49,6 +50,7 @@ type ServerConfig struct {
 	Storage           config.StorageConfig
 	SLAIPayment       config.SLAIPaymentConfig
 	SLAIPaymentClient slaipayment.Client
+	GoogleVerifier    auth.GoogleIdentityVerifier
 }
 
 type Server struct {
@@ -113,13 +115,21 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 		SLAIPaymentDefaultExpiry:   cfg.SLAIPayment.DefaultExpiry,
 	}).WithSLAIPaymentClient(cfg.SLAIPaymentClient).WithAutoResumeAPIKey(autoResumeAPIKey)
 
+	authService := auth.NewService(pool, sessions)
+	if strings.TrimSpace(cfg.GoogleClientID) != "" {
+		authService = authService.WithGoogleVerifier(auth.NewGoogleIDTokenVerifier(cfg.GoogleClientID))
+	}
+	if cfg.GoogleVerifier != nil {
+		authService = authService.WithGoogleVerifier(cfg.GoogleVerifier)
+	}
+
 	server := &Server{
 		db:                pool,
 		log:               logger,
 		readinessTimeout:  cfg.ReadinessTimeout,
 		sessionTTL:        cfg.SessionTTL,
 		sessions:          sessions,
-		authService:       auth.NewService(pool, sessions),
+		authService:       authService,
 		paymentService:    paymentService,
 		adminService:      admin.NewService(pool),
 		apiKeyService:     apiKeyService,
@@ -141,6 +151,7 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 	mux.HandleFunc("GET /", server.root)
 	mux.HandleFunc("POST /v1/auth/signup", server.signup)
 	mux.HandleFunc("POST /v1/auth/login", server.login)
+	mux.HandleFunc("POST /v1/auth/google", server.googleAuth)
 	mux.HandleFunc("POST /v1/auth/logout", server.logout)
 	mux.HandleFunc("GET /v1/me", server.me)
 	mux.HandleFunc("GET /v1/packages", server.listPublicPackages)
@@ -280,6 +291,32 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	user, token, err := s.authService.Login(r.Context(), req.Email, req.Password)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", nil)
+		return
+	}
+
+	s.sessions.SetCookie(w, token, time.Now().UTC().Add(s.sessionTTL))
+	writeJSON(w, http.StatusOK, map[string]any{"user": user})
+}
+
+func (s *Server) googleAuth(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Credential string `json:"credential"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	user, token, err := s.authService.GoogleLogin(r.Context(), req.Credential)
+	if err != nil {
+		status := http.StatusUnauthorized
+		code := "invalid_google_credential"
+		if errors.Is(err, auth.ErrGoogleAuthDisabled) {
+			status = http.StatusServiceUnavailable
+			code = "google_auth_not_configured"
+		} else if errors.Is(err, auth.ErrInvalidCredentials) {
+			code = "invalid_credentials"
+		}
+		writeError(w, status, code, nil)
 		return
 	}
 

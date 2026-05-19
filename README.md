@@ -31,7 +31,7 @@ Implemented now:
 - PostgreSQL connection and readiness checks
 - SQL migration runner
 - Structured logging
-- Email/password signup and login
+- Email/password and Google signup and login
 - Argon2id password hashing
 - HttpOnly session cookies
 - USER and ADMIN roles
@@ -178,6 +178,7 @@ Core settings:
 - `SESSION_SECRET`
 - `COOKIE_SECURE`
 - `SESSION_TTL`
+- `GOOGLE_CLIENT_ID`
 - `ADMIN_SEED_EMAIL`
 - `ADMIN_SEED_PASSWORD`
 - `SLAI_AUTO_MIGRATE`
@@ -229,6 +230,11 @@ Automatic Bakong KHQR checkout settings:
 Frontend settings live in `apps/web/.env.example`:
 
 - `NEXT_PUBLIC_API_BASE_URL`
+- `NEXT_PUBLIC_GOOGLE_CLIENT_ID`
+
+Use the same Google OAuth web client ID for `GOOGLE_CLIENT_ID` and
+`NEXT_PUBLIC_GOOGLE_CLIENT_ID`. Add each deployed web origin, for example
+`http://localhost:3000`, in the Google Cloud OAuth client configuration.
 
 ## Recommended Local Values
 
@@ -527,6 +533,7 @@ Public and authenticated endpoints:
 - `GET /readyz`
 - `POST /v1/auth/signup`
 - `POST /v1/auth/login`
+- `POST /v1/auth/google`
 - `POST /v1/auth/logout`
 - `GET /v1/me`
 - `GET /v1/packages`
@@ -705,6 +712,7 @@ For production-like deployment:
 - Use managed PostgreSQL or a durable Postgres volume.
 - Set strong values for `SESSION_SECRET` and `API_KEY_PEPPER`.
 - Set `COOKIE_SECURE=true` behind HTTPS.
+- Set `GOOGLE_CLIENT_ID` and `NEXT_PUBLIC_GOOGLE_CLIENT_ID` to enable Google sign-in.
 - Set `OMNIROUTE_ENABLED=true`.
 - Set a long random `OMNIROUTE_MANAGEMENT_TOKEN`.
 - Enable the usage sync worker on one or more API replicas.

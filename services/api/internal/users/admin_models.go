@@ -15,6 +15,7 @@ type AdminUserListItem struct {
 	Email                  string    `json:"email"`
 	Role                   string    `json:"role"`
 	Status                 string    `json:"status"`
+	AuthProvider           string    `json:"auth_provider"`
 	BalanceUnits           int64     `json:"balance_units"`
 	LifetimePurchasedUnits int64     `json:"lifetime_purchased_units"`
 	LifetimeUsedUnits      int64     `json:"lifetime_used_units"`
@@ -100,6 +101,7 @@ type AdminUserDetail struct {
 	Email          string                `json:"email"`
 	Role           string                `json:"role"`
 	Status         string                `json:"status"`
+	AuthProvider   string                `json:"auth_provider"`
 	Balance        AdminBalance          `json:"balance"`
 	APIKey         *AdminAPIKeySummary   `json:"api_key"`
 	RecentUsage    []AdminUsageSummary   `json:"recent_usage"`

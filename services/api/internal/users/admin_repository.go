@@ -36,7 +36,7 @@ func (r AdminRepository) List(ctx context.Context, filter AdminListFilter) (Admi
 
 	args = append(args, filter.Limit, filter.Offset)
 	query := `
-		SELECT u.id::text, u.email, u.role, u.status,
+		SELECT u.id::text, u.email, u.role, u.status, u.auth_provider,
 		       COALESCE(cb.available_units, 0),
 		       COALESCE(cb.lifetime_purchased_units, 0),
 		       COALESCE(cb.lifetime_used_units, 0),
@@ -69,6 +69,7 @@ func (r AdminRepository) List(ctx context.Context, filter AdminListFilter) (Admi
 			&item.Email,
 			&item.Role,
 			&item.Status,
+			&item.AuthProvider,
 			&item.BalanceUnits,
 			&item.LifetimePurchasedUnits,
 			&item.LifetimeUsedUnits,
@@ -91,7 +92,7 @@ func (r AdminRepository) List(ctx context.Context, filter AdminListFilter) (Admi
 func (r AdminRepository) GetDetail(ctx context.Context, id string) (AdminUserDetail, error) {
 	var detail AdminUserDetail
 	err := r.db.QueryRow(ctx, `
-		SELECT u.id::text, u.email, u.role, u.status,
+		SELECT u.id::text, u.email, u.role, u.status, u.auth_provider,
 		       COALESCE(cb.available_units, 0),
 		       COALESCE(cb.lifetime_purchased_units, 0),
 		       COALESCE(cb.lifetime_used_units, 0),
@@ -106,6 +107,7 @@ func (r AdminRepository) GetDetail(ctx context.Context, id string) (AdminUserDet
 		&detail.Email,
 		&detail.Role,
 		&detail.Status,
+		&detail.AuthProvider,
 		&detail.Balance.AvailableUnits,
 		&detail.Balance.LifetimePurchasedUnits,
 		&detail.Balance.LifetimeUsedUnits,
@@ -165,17 +167,20 @@ func (r AdminRepository) UpdateStatus(ctx context.Context, id, status string) (p
 			UPDATE users
 			SET status = $2
 			WHERE id = $1
-			RETURNING id::text, email, role, status, balance_policy, created_at, updated_at
+			RETURNING id::text, email, COALESCE(password_hash, ''), role, status, auth_provider, COALESCE(google_subject, ''), balance_policy, created_at, updated_at
 		)
-		SELECT previous.status, updated.id, updated.email, updated.role, updated.status,
-		       updated.balance_policy, updated.created_at, updated.updated_at
+		SELECT previous.status, updated.id, updated.email, updated.password_hash, updated.role, updated.status,
+		       updated.auth_provider, updated.google_subject, updated.balance_policy, updated.created_at, updated.updated_at
 		FROM previous, updated
 	`, id, status).Scan(
 		&previousStatus,
 		&updated.ID,
 		&updated.Email,
+		&updated.PasswordHash,
 		&updated.Role,
 		&updated.Status,
+		&updated.AuthProvider,
+		&updated.GoogleSubject,
 		&updated.BalancePolicy,
 		&updated.CreatedAt,
 		&updated.UpdatedAt,

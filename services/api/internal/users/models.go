@@ -8,6 +8,9 @@ const (
 
 	StatusActive    = "ACTIVE"
 	StatusSuspended = "SUSPENDED"
+
+	AuthProviderPassword = "password"
+	AuthProviderGoogle   = "google"
 )
 
 type User struct {
@@ -15,10 +18,12 @@ type User struct {
 	Email         string    `json:"email"`
 	Role          string    `json:"role"`
 	Status        string    `json:"status"`
+	AuthProvider  string    `json:"authProvider"`
 	BalancePolicy string    `json:"balancePolicy"`
 	CreatedAt     time.Time `json:"createdAt"`
 	UpdatedAt     time.Time `json:"updatedAt"`
 	PasswordHash  string    `json:"-"`
+	GoogleSubject string    `json:"-"`
 }
 
 func (u User) IsAdmin() bool {

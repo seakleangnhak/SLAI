@@ -147,6 +147,7 @@ export default function AdminUserDetailPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge dot tone={statusTone(detail.status)}>{detail.status}</Badge>
                   <Badge dot tone={statusTone(detail.role)}>{detail.role}</Badge>
+                  <Badge tone="neutral">{detail.auth_provider === "google" ? "Google sign-in" : "Password sign-in"}</Badge>
                 </div>
                 <h1 className="mt-3 break-words text-3xl font-semibold tracking-[-0.02em] text-slate-950">{detail.email}</h1>
                 <p className="mt-2 font-mono text-xs text-slate-400">User ID {truncateId(detail.id, 12, 8)}</p>

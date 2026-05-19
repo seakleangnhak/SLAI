@@ -16,6 +16,10 @@ import { formatCompactCredits, formatDateTime, formatUnits, truncateId } from "@
 
 const LIMIT = 50;
 
+function authProviderLabel(provider: AdminUserListItem["auth_provider"]) {
+  return provider === "google" ? "Google" : "Password";
+}
+
 export default function AdminUsersPage() {
   const [data, setData] = useState<AdminUserListResponse | null>(null);
   const [filters, setFilters] = useState<AdminUserFilter>({ limit: LIMIT, offset: 0 });
@@ -154,6 +158,7 @@ export default function AdminUsersPage() {
                       <DenseTh>User</DenseTh>
                       <DenseTh>Role</DenseTh>
                       <DenseTh>Status</DenseTh>
+                      <DenseTh>Sign-in</DenseTh>
                       <DenseTh>Balance</DenseTh>
                       <DenseTh>Lifetime Used</DenseTh>
                       <DenseTh>API Key</DenseTh>
@@ -172,6 +177,7 @@ export default function AdminUsersPage() {
                         </DenseTd>
                         <DenseTd><Badge dot tone={statusTone(user.role)}>{user.role}</Badge></DenseTd>
                         <DenseTd><Badge dot tone={statusTone(user.status)}>{user.status}</Badge></DenseTd>
+                        <DenseTd><Badge tone="neutral">{authProviderLabel(user.auth_provider)}</Badge></DenseTd>
                         <DenseTd><span className="font-mono text-slate-900">{formatCompactCredits(user.balance_units)}</span></DenseTd>
                         <DenseTd><span className="font-mono text-slate-700">{formatCompactCredits(user.lifetime_used_units)}</span></DenseTd>
                         <DenseTd>

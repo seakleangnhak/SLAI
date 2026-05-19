@@ -104,6 +104,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		SessionSecret:     cfg.SessionSecret,
 		CookieSecure:      cfg.CookieSecure,
 		SessionTTL:        cfg.SessionTTL,
+		GoogleClientID:    cfg.GoogleClientID,
 		APIKeyPepper:      cfg.APIKeyPepper,
 		APIKeyPrefix:      cfg.APIKeyPrefix,
 		OmniRoute:         cfg.OmniRoute,

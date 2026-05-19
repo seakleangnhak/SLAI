@@ -11,6 +11,7 @@ export type User = {
   email: string;
   role: Role;
   status: UserStatus;
+  authProvider: "password" | "google";
   balancePolicy: string;
   createdAt: string;
   updatedAt: string;
@@ -327,6 +328,7 @@ export type AdminUserListItem = {
   email: string;
   role: Role;
   status: UserStatus;
+  auth_provider: "password" | "google";
   balance_units: number;
   lifetime_purchased_units: number;
   lifetime_used_units: number;
@@ -402,6 +404,7 @@ export type AdminUserDetail = {
   email: string;
   role: Role;
   status: UserStatus;
+  auth_provider: "password" | "google";
   balance: AdminBalance;
   api_key?: AdminAPIKey | null;
   recent_usage: AdminUsageEvent[];
@@ -664,6 +667,11 @@ export const api = {
       apiFetch<{ user: User }>("/v1/auth/login", {
         method: "POST",
         body: { email, password }
+      }),
+    google: (credential: string) =>
+      apiFetch<{ user: User }>("/v1/auth/google", {
+        method: "POST",
+        body: { credential }
       }),
     logout: () => apiFetch<{ status: string }>("/v1/auth/logout", { method: "POST" }),
     me: () => apiFetch<{ user: User }>("/v1/me")

@@ -28,6 +28,7 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
       COOKIE_SECURE: "true"
       SESSION_TTL: ${SESSION_TTL:-168h}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       API_KEY_PEPPER: ${API_KEY_PEPPER:?set API_KEY_PEPPER}
       API_KEY_PREFIX: ${API_KEY_PREFIX:-sk_slai}
       ADMIN_SEED_EMAIL: ${ADMIN_SEED_EMAIL:-}
@@ -78,6 +79,7 @@ services:
     restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://api:8080}
+      NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-${GOOGLE_CLIENT_ID:-}}
     depends_on:
       api:
         condition: service_healthy
