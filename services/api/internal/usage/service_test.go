@@ -24,6 +24,7 @@ import (
 	"github.com/slai/slai/services/api/internal/config"
 	"github.com/slai/slai/services/api/internal/credits"
 	"github.com/slai/slai/services/api/internal/ledger"
+	"github.com/slai/slai/services/api/internal/notifications"
 	"github.com/slai/slai/services/api/internal/omniroute"
 	platformdb "github.com/slai/slai/services/api/internal/platform/db"
 	"github.com/slai/slai/services/api/internal/usage"
@@ -151,6 +152,50 @@ func TestIngestMockUsageDeductsBalanceLedgerAndIsIdempotent(t *testing.T) {
 		t.Fatalf("expected duplicate replay, got %#v", replay)
 	}
 	assertBalanceAndLifetimeUsed(t, user.ID, storedDecimal(t, "92.403"), wantCost)
+}
+
+func TestIngestMockUsageSendsLowBalanceAlertOnce(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	user := createUser(t, "low-balance@example.com", users.RoleUser)
+	key := createLocalAPIKey(t, user.ID)
+	creditUser(t, user.ID, 6)
+	emailSender := &captureEmailSender{lowBalanceCounts: map[string]int{}}
+	svc := usage.NewService(testDB, nil, config.OmniRouteConfig{Enabled: false, UsageSyncMode: "call_logs"}, testLogger()).
+		WithNotifications(notifications.NewService(testDB, emailSender, notifications.Config{
+			Enabled:        true,
+			ThresholdUnits: storedWhole(t, 5),
+		}))
+
+	override := storedWhole(t, 2)
+	_, err := svc.IngestMockEvent(context.Background(), usage.IngestInput{
+		ExternalEventID:   "low-balance-001",
+		APIKeyID:          &key.APIKey.ID,
+		CostUnitsOverride: &override,
+		OccurredAt:        time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if emailSender.lowBalanceCounts["low-balance@example.com"] != 1 {
+		t.Fatalf("low balance email count = %d", emailSender.lowBalanceCounts["low-balance@example.com"])
+	}
+	if emailSender.lastLowBalanceUnits != storedWhole(t, 4) || emailSender.lastLowBalanceThreshold != storedWhole(t, 5) {
+		t.Fatalf("low balance payload balance=%d threshold=%d", emailSender.lastLowBalanceUnits, emailSender.lastLowBalanceThreshold)
+	}
+
+	_, err = svc.IngestMockEvent(context.Background(), usage.IngestInput{
+		ExternalEventID:   "low-balance-002",
+		APIKeyID:          &key.APIKey.ID,
+		CostUnitsOverride: &override,
+		OccurredAt:        time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if emailSender.lowBalanceCounts["low-balance@example.com"] != 1 {
+		t.Fatalf("low balance email count after second debit = %d", emailSender.lowBalanceCounts["low-balance@example.com"])
+	}
 }
 
 func TestUnknownAPIKeyIsIgnored(t *testing.T) {
@@ -492,7 +537,7 @@ func assertKeyStatus(t *testing.T, keyID string, status string) {
 func truncateTables(t *testing.T) {
 	t.Helper()
 	_, err := testDB.Exec(context.Background(), `
-		TRUNCATE omniroute_sync_state, usage_events, api_keys, admin_audit_logs, credit_ledger_entries, payments, credit_balances, sessions, signup_otp_rate_limits, signup_email_verifications, credit_packages, users
+		TRUNCATE omniroute_sync_state, usage_events, api_keys, admin_audit_logs, user_email_notifications, credit_ledger_entries, payments, credit_balances, sessions, password_reset_otp_rate_limits, password_reset_otps, signup_otp_rate_limits, signup_email_verifications, credit_packages, users
 		RESTART IDENTITY CASCADE
 	`)
 	if err != nil {
@@ -523,6 +568,34 @@ func requireDB(t *testing.T) {
 
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+type captureEmailSender struct {
+	lowBalanceCounts        map[string]int
+	lastLowBalanceUnits     int64
+	lastLowBalanceThreshold int64
+}
+
+func (s *captureEmailSender) SendSignupOTP(context.Context, string, string, time.Time) error {
+	return nil
+}
+
+func (s *captureEmailSender) SendPasswordResetOTP(context.Context, string, string, time.Time) error {
+	return nil
+}
+
+func (s *captureEmailSender) SendPasswordChangedAlert(context.Context, string, time.Time) error {
+	return nil
+}
+
+func (s *captureEmailSender) SendLowBalanceAlert(_ context.Context, email string, balanceUnits, thresholdUnits int64) error {
+	if s.lowBalanceCounts == nil {
+		s.lowBalanceCounts = map[string]int{}
+	}
+	s.lowBalanceCounts[email]++
+	s.lastLowBalanceUnits = balanceUnits
+	s.lastLowBalanceThreshold = thresholdUnits
+	return nil
 }
 
 type mockOmniRoute struct {

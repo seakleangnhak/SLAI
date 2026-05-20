@@ -699,7 +699,12 @@ export const api = {
         body: { credential }
       }),
     logout: () => apiFetch<{ status: string }>("/v1/auth/logout", { method: "POST" }),
-    me: () => apiFetch<{ user: User }>("/v1/me")
+    me: () => apiFetch<{ user: User }>("/v1/me"),
+    changePassword: (currentPassword: string, newPassword: string) =>
+      apiFetch<{ status: string }>("/v1/me/password", {
+        method: "POST",
+        body: { currentPassword, newPassword }
+      })
   },
   packages: {
     listPublic: () => apiFetch<{ packages: CreditPackage[] }>("/v1/packages")

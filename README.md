@@ -199,6 +199,9 @@ Core settings:
 - `PASSWORD_RESET_OTP_REQUEST_WINDOW`
 - `PASSWORD_RESET_OTP_MAX_EMAIL_REQUESTS`
 - `PASSWORD_RESET_OTP_MAX_IP_REQUESTS`
+- `PASSWORD_CHANGED_ALERTS_ENABLED`
+- `LOW_BALANCE_ALERTS_ENABLED`
+- `LOW_BALANCE_ALERT_THRESHOLD`
 - `ADMIN_SEED_EMAIL`
 - `ADMIN_SEED_PASSWORD`
 - `SLAI_AUTO_MIGRATE`
@@ -247,7 +250,7 @@ Automatic Bakong KHQR checkout settings:
 - `SLAI_PAYMENT_DEFAULT_EXPIRY` controls checkout expiry, for example `30m`.
 - `SLAI_PAYMENT_HTTP_TIMEOUT` controls outbound provider calls.
 
-Email OTP signup settings:
+Email delivery settings:
 
 - `BREVO_API_KEY` enables Brevo HTTP API delivery over port 443 and takes precedence over SMTP.
 - `BREVO_API_URL` defaults to `https://api.brevo.com/v3/smtp/email`.
@@ -267,7 +270,10 @@ Email OTP signup settings:
 - `PASSWORD_RESET_OTP_REQUEST_WINDOW` controls the password reset request limit window.
 - `PASSWORD_RESET_OTP_MAX_EMAIL_REQUESTS` limits password reset code sends per email within the request window.
 - `PASSWORD_RESET_OTP_MAX_IP_REQUESTS` limits password reset code sends per client IP within the request window.
-- When neither `BREVO_API_KEY` nor `SMTP_HOST` is set, the API logs generated signup and password reset OTPs for local development.
+- `PASSWORD_CHANGED_ALERTS_ENABLED` controls password changed security alerts after password changes and password resets.
+- `LOW_BALANCE_ALERTS_ENABLED` controls low balance email alerts after usage debits.
+- `LOW_BALANCE_ALERT_THRESHOLD` controls the displayed credit balance threshold, for example `5` means 5 credits.
+- When neither `BREVO_API_KEY` nor `SMTP_HOST` is set, the API logs generated signup/password reset OTPs and security alerts for local development.
 
 Frontend settings live in `apps/web/.env.example`:
 
@@ -581,6 +587,7 @@ Public and authenticated endpoints:
 - `POST /v1/auth/google`
 - `POST /v1/auth/logout`
 - `GET /v1/me`
+- `POST /v1/me/password`
 - `GET /v1/packages`
 - `GET /v1/balance`
 - `GET /v1/ledger`

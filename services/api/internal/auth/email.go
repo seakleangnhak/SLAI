@@ -13,6 +13,8 @@ import (
 	"net/smtp"
 	"strings"
 	"time"
+
+	"github.com/slai/slai/services/api/internal/credits"
 )
 
 const (
@@ -23,6 +25,8 @@ const (
 type EmailSender interface {
 	SendSignupOTP(ctx context.Context, email, otp string, expiresAt time.Time) error
 	SendPasswordResetOTP(ctx context.Context, email, otp string, expiresAt time.Time) error
+	SendPasswordChangedAlert(ctx context.Context, email string, changedAt time.Time) error
+	SendLowBalanceAlert(ctx context.Context, email string, balanceUnits, thresholdUnits int64) error
 }
 
 type NoopEmailSender struct {
@@ -39,6 +43,20 @@ func (s NoopEmailSender) SendSignupOTP(_ context.Context, email, otp string, exp
 func (s NoopEmailSender) SendPasswordResetOTP(_ context.Context, email, otp string, expiresAt time.Time) error {
 	if s.Log != nil {
 		s.Log.Warn("email delivery is not configured; password reset OTP generated", "email", email, "otp", otp, "expires_at", expiresAt)
+	}
+	return nil
+}
+
+func (s NoopEmailSender) SendPasswordChangedAlert(_ context.Context, email string, changedAt time.Time) error {
+	if s.Log != nil {
+		s.Log.Warn("email delivery is not configured; password changed alert generated", "email", email, "changed_at", changedAt)
+	}
+	return nil
+}
+
+func (s NoopEmailSender) SendLowBalanceAlert(_ context.Context, email string, balanceUnits, thresholdUnits int64) error {
+	if s.Log != nil {
+		s.Log.Warn("email delivery is not configured; low balance alert generated", "email", email, "balance_units", balanceUnits, "threshold_units", thresholdUnits)
 	}
 	return nil
 }
@@ -76,6 +94,14 @@ func (s BrevoEmailSender) SendSignupOTP(ctx context.Context, email, otp string, 
 
 func (s BrevoEmailSender) SendPasswordResetOTP(ctx context.Context, email, otp string, expiresAt time.Time) error {
 	return s.sendOTP(ctx, email, "Reset your SLAI password", passwordResetOTPText(otp, expiresAt), "password reset OTP")
+}
+
+func (s BrevoEmailSender) SendPasswordChangedAlert(ctx context.Context, email string, changedAt time.Time) error {
+	return s.sendOTP(ctx, email, "Your SLAI password was changed", passwordChangedAlertText(changedAt), "password changed alert")
+}
+
+func (s BrevoEmailSender) SendLowBalanceAlert(ctx context.Context, email string, balanceUnits, thresholdUnits int64) error {
+	return s.sendOTP(ctx, email, "Your SLAI balance is low", lowBalanceAlertText(balanceUnits, thresholdUnits), "low balance alert")
 }
 
 func (s BrevoEmailSender) sendOTP(ctx context.Context, email, subject, textContent, label string) error {
@@ -171,6 +197,14 @@ func (s SMTPEmailSender) SendPasswordResetOTP(ctx context.Context, email, otp st
 	return s.sendOTP(ctx, email, "Reset your SLAI password", passwordResetOTPText(otp, expiresAt), "password reset OTP")
 }
 
+func (s SMTPEmailSender) SendPasswordChangedAlert(ctx context.Context, email string, changedAt time.Time) error {
+	return s.sendOTP(ctx, email, "Your SLAI password was changed", passwordChangedAlertText(changedAt), "password changed alert")
+}
+
+func (s SMTPEmailSender) SendLowBalanceAlert(ctx context.Context, email string, balanceUnits, thresholdUnits int64) error {
+	return s.sendOTP(ctx, email, "Your SLAI balance is low", lowBalanceAlertText(balanceUnits, thresholdUnits), "low balance alert")
+}
+
 func (s SMTPEmailSender) sendOTP(ctx context.Context, email, subject, body, label string) error {
 	host := strings.TrimSpace(s.cfg.Host)
 	from := strings.TrimSpace(s.cfg.From)
@@ -206,6 +240,32 @@ func signupOTPText(otp string, expiresAt time.Time) string {
 
 func passwordResetOTPText(otp string, expiresAt time.Time) string {
 	return fmt.Sprintf("Your SLAI password reset code is %s. It expires at %s.\n\nIf you did not request this, you can ignore this email.\n", otp, expiresAt.UTC().Format(time.RFC1123))
+}
+
+func passwordChangedAlertText(changedAt time.Time) string {
+	return fmt.Sprintf("Your SLAI password was changed at %s.\n\nIf this was not you, reset your password immediately and contact support.\n", changedAt.UTC().Format(time.RFC1123))
+}
+
+func lowBalanceAlertText(balanceUnits, thresholdUnits int64) string {
+	return fmt.Sprintf("Your SLAI balance is low. Current balance: %s credits. Alert threshold: %s credits.\n\nAdd credits to keep API access available.\n", formatCreditUnits(balanceUnits), formatCreditUnits(thresholdUnits))
+}
+
+func formatCreditUnits(units int64) string {
+	negative := units < 0
+	if negative {
+		units = -units
+	}
+	whole := units / credits.Scale
+	fraction := units % credits.Scale
+	formatted := fmt.Sprintf("%d", whole)
+	if fraction > 0 {
+		fractionText := strings.TrimRight(fmt.Sprintf("%06d", fraction), "0")
+		formatted += "." + fractionText
+	}
+	if negative {
+		return "-" + formatted
+	}
+	return formatted
 }
 
 func sendSMTPMail(ctx context.Context, addr, host string, auth smtp.Auth, from string, to []string, msg []byte, timeout time.Duration) error {

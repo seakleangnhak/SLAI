@@ -44,6 +44,8 @@ var (
 	ErrInvalidCredentials      = errors.New("invalid email or password")
 	ErrEmailAlreadyRegistered  = errors.New("email is already registered")
 	ErrEmailDeliveryFailed     = errors.New("email delivery failed")
+	ErrInvalidCurrentPassword  = errors.New("current password is invalid")
+	ErrPasswordAuthUnavailable = errors.New("password authentication is not available")
 	ErrInvalidVerificationCode = errors.New("invalid verification code")
 	ErrVerificationCodeExpired = errors.New("verification code expired")
 	ErrTooManyOTPAttempts      = errors.New("too many verification attempts")
@@ -92,6 +94,7 @@ type Service struct {
 	passwordResetOTPRequestWindow    time.Duration
 	passwordResetOTPMaxEmailRequests int
 	passwordResetOTPMaxIPRequests    int
+	passwordChangedAlertsEnabled     bool
 }
 
 func NewService(pool *pgxpool.Pool, sessions SessionManager) Service {
@@ -109,6 +112,7 @@ func NewService(pool *pgxpool.Pool, sessions SessionManager) Service {
 		passwordResetOTPRequestWindow:    defaultPasswordResetOTPRequestWindow,
 		passwordResetOTPMaxEmailRequests: defaultPasswordResetOTPMaxEmailRequests,
 		passwordResetOTPMaxIPRequests:    defaultPasswordResetOTPMaxIPRequests,
+		passwordChangedAlertsEnabled:     true,
 	}
 }
 
@@ -167,6 +171,11 @@ func (s Service) WithPasswordResetOTPControls(resendCooldown, requestWindow time
 	if maxIPRequests > 0 {
 		s.passwordResetOTPMaxIPRequests = maxIPRequests
 	}
+	return s
+}
+
+func (s Service) WithPasswordChangedAlerts(enabled bool) Service {
+	s.passwordChangedAlertsEnabled = enabled
 	return s
 }
 
@@ -361,6 +370,83 @@ func (s Service) Login(ctx context.Context, email, password string) (users.User,
 	return user, token, nil
 }
 
+func (s Service) ChangePassword(ctx context.Context, userID, currentPassword, newPassword string) error {
+	currentPassword = strings.TrimSpace(currentPassword)
+	if currentPassword == "" {
+		return ErrInvalidCurrentPassword
+	}
+
+	newPasswordHash, err := HashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+
+	var email string
+	changedAt := time.Now().UTC()
+	err = platformdb.InTx(ctx, s.pool, func(tx pgx.Tx) error {
+		var user users.User
+		err := tx.QueryRow(ctx, `
+			SELECT id::text, email, COALESCE(password_hash, ''), role, status, auth_provider, COALESCE(google_subject, ''), balance_policy, created_at, updated_at
+			FROM users
+			WHERE id = $1
+			FOR UPDATE
+		`, userID).Scan(
+			&user.ID,
+			&user.Email,
+			&user.PasswordHash,
+			&user.Role,
+			&user.Status,
+			&user.AuthProvider,
+			&user.GoogleSubject,
+			&user.BalancePolicy,
+			&user.CreatedAt,
+			&user.UpdatedAt,
+		)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrInvalidCredentials
+		}
+		if err != nil {
+			return fmt.Errorf("get user for password change: %w", err)
+		}
+		if !user.IsActive() {
+			return ErrInvalidCredentials
+		}
+		if user.PasswordHash == "" {
+			return ErrPasswordAuthUnavailable
+		}
+
+		valid, err := VerifyPassword(currentPassword, user.PasswordHash)
+		if err != nil || !valid {
+			return ErrInvalidCurrentPassword
+		}
+
+		if _, err := tx.Exec(ctx, `
+			UPDATE users
+			SET password_hash = $2,
+			    auth_provider = $3
+			WHERE id = $1
+		`, user.ID, newPasswordHash, users.AuthProviderPassword); err != nil {
+			return fmt.Errorf("update password: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE sessions
+			SET revoked_at = now()
+			WHERE user_id = $1 AND revoked_at IS NULL
+		`, user.ID); err != nil {
+			return fmt.Errorf("revoke sessions after password change: %w", err)
+		}
+		email = user.Email
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("change password: %w", err)
+	}
+	if s.passwordChangedAlertsEnabled && email != "" {
+		_ = s.emailSender.SendPasswordChangedAlert(ctx, email, changedAt)
+	}
+	return nil
+}
+
 func (s Service) RequestPasswordReset(ctx context.Context, email, clientIP string) (PasswordResetOTPResult, error) {
 	email = users.NormalizeEmail(email)
 	if email == "" {
@@ -447,6 +533,7 @@ func (s Service) ResetPassword(ctx context.Context, email, otp, password string)
 		return err
 	}
 
+	changedAt := time.Now().UTC()
 	err = platformdb.InTx(ctx, s.pool, func(tx pgx.Tx) error {
 		var otpHash string
 		var attempts int
@@ -523,6 +610,9 @@ func (s Service) ResetPassword(ctx context.Context, email, otp, password string)
 	})
 	if err != nil {
 		return fmt.Errorf("reset password: %w", err)
+	}
+	if s.passwordChangedAlertsEnabled {
+		_ = s.emailSender.SendPasswordChangedAlert(ctx, email, changedAt)
 	}
 	return nil
 }

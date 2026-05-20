@@ -186,7 +186,7 @@ func TestSignupOTPRateLimitsResendAndIP(t *testing.T) {
 func TestPasswordResetOTPFlow(t *testing.T) {
 	requireDB(t)
 	truncateTables(t)
-	emailSender := &captureEmailSender{passwordResetOTPs: map[string]string{}, passwordResetCounts: map[string]int{}}
+	emailSender := &captureEmailSender{passwordResetOTPs: map[string]string{}, passwordResetCounts: map[string]int{}, passwordChangedCounts: map[string]int{}}
 	client := newTestClientWithEmailSender(t, emailSender)
 	user := createUser(t, "reset@example.com", users.RoleUser)
 	existingCookies := loginCookies(t, client, user.Email)
@@ -215,6 +215,9 @@ func TestPasswordResetOTPFlow(t *testing.T) {
 		"password": "new-password",
 	}, nil)
 	assertStatus(t, confirm, http.StatusOK)
+	if emailSender.passwordChangedCounts["reset@example.com"] != 1 {
+		t.Fatalf("password changed email count = %d", emailSender.passwordChangedCounts["reset@example.com"])
+	}
 
 	meWithOldSession := client.get(t, "/v1/me", existingCookies)
 	assertStatus(t, meWithOldSession, http.StatusUnauthorized)
@@ -303,6 +306,84 @@ func TestPasswordResetOTPRateLimitsResendAndIP(t *testing.T) {
 	}
 	if emailSender.passwordResetCounts["third@example.com"] != 0 {
 		t.Fatalf("third@example.com reset email count = %d", emailSender.passwordResetCounts["third@example.com"])
+	}
+}
+
+func TestChangePasswordRevokesSessionsAndRequiresCurrentPassword(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	emailSender := &captureEmailSender{passwordChangedCounts: map[string]int{}}
+	client := newTestClientWithEmailSender(t, emailSender)
+	user := createUser(t, "security@example.com", users.RoleUser)
+	firstSession := loginCookies(t, client, user.Email)
+	secondSession := loginCookies(t, client, user.Email)
+
+	wrongCurrent := client.post(t, "/v1/me/password", map[string]any{
+		"currentPassword": "wrong-password",
+		"newPassword":     "new-password",
+	}, firstSession)
+	assertStatus(t, wrongCurrent, http.StatusUnauthorized)
+	if got := stringField(t, wrongCurrent.JSON, "error"); got != "invalid_current_password" {
+		t.Fatalf("error = %q", got)
+	}
+
+	tooShort := client.post(t, "/v1/me/password", map[string]any{
+		"currentPassword": "correct-password",
+		"newPassword":     "short",
+	}, firstSession)
+	assertStatus(t, tooShort, http.StatusBadRequest)
+	if got := stringField(t, tooShort.JSON, "error"); got != "password_change_failed" {
+		t.Fatalf("error = %q", got)
+	}
+
+	changed := client.post(t, "/v1/me/password", map[string]any{
+		"currentPassword": "correct-password",
+		"newPassword":     "new-password",
+	}, firstSession)
+	assertStatus(t, changed, http.StatusOK)
+	if emailSender.passwordChangedCounts["security@example.com"] != 1 {
+		t.Fatalf("password changed email count = %d", emailSender.passwordChangedCounts["security@example.com"])
+	}
+
+	meWithFirstSession := client.get(t, "/v1/me", firstSession)
+	assertStatus(t, meWithFirstSession, http.StatusUnauthorized)
+	meWithSecondSession := client.get(t, "/v1/me", secondSession)
+	assertStatus(t, meWithSecondSession, http.StatusUnauthorized)
+
+	oldLogin := client.post(t, "/v1/auth/login", map[string]any{
+		"email":    "security@example.com",
+		"password": "correct-password",
+	}, nil)
+	assertStatus(t, oldLogin, http.StatusUnauthorized)
+
+	newLogin := client.post(t, "/v1/auth/login", map[string]any{
+		"email":    "security@example.com",
+		"password": "new-password",
+	}, nil)
+	assertStatus(t, newLogin, http.StatusOK)
+}
+
+func TestChangePasswordRejectsGoogleOnlyUser(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	verifier := &fakeGoogleVerifier{identities: map[string]auth.GoogleIdentity{
+		"google-token": {
+			Subject:       "google-subject-security",
+			Email:         "google-security@example.com",
+			EmailVerified: true,
+		},
+	}}
+	client := newTestClientWithGoogle(t, verifier)
+	login := client.post(t, "/v1/auth/google", map[string]any{"credential": "google-token"}, nil)
+	assertStatus(t, login, http.StatusOK)
+
+	response := client.post(t, "/v1/me/password", map[string]any{
+		"currentPassword": "unused-password",
+		"newPassword":     "new-password",
+	}, login.Cookies())
+	assertStatus(t, response, http.StatusConflict)
+	if got := stringField(t, response.JSON, "error"); got != "password_auth_unavailable" {
+		t.Fatalf("error = %q", got)
 	}
 }
 
@@ -1719,6 +1800,10 @@ func newTestClientWithEmailSender(t *testing.T, sender auth.EmailSender) testCli
 
 func newTestClientWithEmailSenderAndEmailConfig(t *testing.T, sender auth.EmailSender, emailCfg config.EmailConfig) testClient {
 	t.Helper()
+	if emailCfg.LowBalanceAlertThresholdUnits == 0 {
+		emailCfg.LowBalanceAlertThresholdUnits = 5_000_000
+	}
+	emailCfg.PasswordChangedAlertsEnabled = true
 	server := httpserver.NewServer(httpserver.ServerConfig{
 		Addr:             ":0",
 		ReadinessTimeout: time.Second,
@@ -1882,10 +1967,14 @@ type fakeGoogleVerifier struct {
 }
 
 type captureEmailSender struct {
-	otps                map[string]string
-	counts              map[string]int
-	passwordResetOTPs   map[string]string
-	passwordResetCounts map[string]int
+	otps                    map[string]string
+	counts                  map[string]int
+	passwordResetOTPs       map[string]string
+	passwordResetCounts     map[string]int
+	passwordChangedCounts   map[string]int
+	lowBalanceCounts        map[string]int
+	lastLowBalanceUnits     int64
+	lastLowBalanceThreshold int64
 }
 
 func (s *captureEmailSender) SendSignupOTP(_ context.Context, email, otp string, _ time.Time) error {
@@ -1909,6 +1998,24 @@ func (s *captureEmailSender) SendPasswordResetOTP(_ context.Context, email, otp 
 	}
 	s.passwordResetOTPs[email] = otp
 	s.passwordResetCounts[email]++
+	return nil
+}
+
+func (s *captureEmailSender) SendPasswordChangedAlert(_ context.Context, email string, _ time.Time) error {
+	if s.passwordChangedCounts == nil {
+		s.passwordChangedCounts = map[string]int{}
+	}
+	s.passwordChangedCounts[email]++
+	return nil
+}
+
+func (s *captureEmailSender) SendLowBalanceAlert(_ context.Context, email string, balanceUnits, thresholdUnits int64) error {
+	if s.lowBalanceCounts == nil {
+		s.lowBalanceCounts = map[string]int{}
+	}
+	s.lowBalanceCounts[email]++
+	s.lastLowBalanceUnits = balanceUnits
+	s.lastLowBalanceThreshold = thresholdUnits
 	return nil
 }
 
@@ -2175,7 +2282,7 @@ func loginCookies(t *testing.T, client testClient, email string) []*http.Cookie 
 func truncateTables(t *testing.T) {
 	t.Helper()
 	_, err := testDB.Exec(context.Background(), `
-		TRUNCATE admin_audit_logs, credit_ledger_entries, payment_proofs, payments, credit_balances, sessions, password_reset_otp_rate_limits, password_reset_otps, signup_otp_rate_limits, signup_email_verifications, credit_packages, users
+		TRUNCATE admin_audit_logs, user_email_notifications, credit_ledger_entries, payment_proofs, payments, credit_balances, sessions, password_reset_otp_rate_limits, password_reset_otps, signup_otp_rate_limits, signup_email_verifications, credit_packages, users
 		RESTART IDENTITY CASCADE
 	`)
 	if err != nil {

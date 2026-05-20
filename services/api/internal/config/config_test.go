@@ -91,6 +91,15 @@ func TestUsageSyncWorkerConfigDefaults(t *testing.T) {
 	if cfg.Email.PasswordResetOTPMaxIPRequests != 20 {
 		t.Fatalf("password reset OTP max IP requests = %d, want 20", cfg.Email.PasswordResetOTPMaxIPRequests)
 	}
+	if !cfg.Email.PasswordChangedAlertsEnabled {
+		t.Fatal("password changed alerts should be enabled by default")
+	}
+	if !cfg.Email.LowBalanceAlertsEnabled {
+		t.Fatal("low balance alerts should be enabled by default")
+	}
+	if cfg.Email.LowBalanceAlertThresholdUnits != 5_000_000 {
+		t.Fatalf("low balance threshold = %d, want 5000000", cfg.Email.LowBalanceAlertThresholdUnits)
+	}
 }
 
 func TestSLAIPaymentEnabledRequiresCallbackSecret(t *testing.T) {
@@ -180,6 +189,9 @@ func clearConfigEnv(t *testing.T) {
 		"PASSWORD_RESET_OTP_REQUEST_WINDOW",
 		"PASSWORD_RESET_OTP_MAX_EMAIL_REQUESTS",
 		"PASSWORD_RESET_OTP_MAX_IP_REQUESTS",
+		"PASSWORD_CHANGED_ALERTS_ENABLED",
+		"LOW_BALANCE_ALERTS_ENABLED",
+		"LOW_BALANCE_ALERT_THRESHOLD",
 	} {
 		unsetEnv(t, key)
 	}

@@ -110,6 +110,42 @@ func TestBrevoEmailSenderSendsPasswordResetOTP(t *testing.T) {
 	}
 }
 
+func TestBrevoEmailSenderSendsSecurityNotifications(t *testing.T) {
+	payloads := []brevoSendEmailRequest{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload brevoSendEmailRequest
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
+		payloads = append(payloads, payload)
+		writeJSON(t, w, http.StatusCreated, map[string]string{"messageId": "queued"})
+	}))
+	defer server.Close()
+
+	sender := NewBrevoEmailSender(BrevoConfig{
+		APIKey:  "test-api-key",
+		APIURL:  server.URL,
+		From:    "noreply@slai.shop",
+		Timeout: time.Second,
+	})
+
+	if err := sender.SendPasswordChangedAlert(context.Background(), "dev@example.com", time.Date(2026, 5, 19, 4, 15, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	if err := sender.SendLowBalanceAlert(context.Background(), "dev@example.com", 1_250_000, 5_000_000); err != nil {
+		t.Fatal(err)
+	}
+	if len(payloads) != 2 {
+		t.Fatalf("payload count = %d", len(payloads))
+	}
+	if payloads[0].Subject != "Your SLAI password was changed" || !strings.Contains(payloads[0].TextContent, "password was changed") {
+		t.Fatalf("password alert payload = %#v", payloads[0])
+	}
+	if payloads[1].Subject != "Your SLAI balance is low" || !strings.Contains(payloads[1].TextContent, "1.25 credits") {
+		t.Fatalf("low balance payload = %#v", payloads[1])
+	}
+}
+
 func writeJSON(t *testing.T, w http.ResponseWriter, status int, value any) {
 	t.Helper()
 	w.Header().Set("Content-Type", "application/json")

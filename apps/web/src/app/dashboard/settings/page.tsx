@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { Badge, statusTone } from "@/components/Badge";
@@ -8,6 +8,7 @@ import { Button } from "@/components/Button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/Card";
 import { DashboardShell } from "@/components/DashboardShell";
 import { ErrorState } from "@/components/ErrorState";
+import { AuthPasswordInput } from "@/components/AuthPage";
 import { LoadingState } from "@/components/LoadingState";
 import { api, readableError, type User } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -55,6 +56,104 @@ function RuleItem({ title, text, tone = "blue" }: { title: string; text: string;
         <p className="mt-0.5 text-sm leading-6 text-slate-500">{text}</p>
       </div>
     </div>
+  );
+}
+
+type PasswordErrors = {
+  currentPassword?: string;
+  newPassword?: string;
+  confirmPassword?: string;
+};
+
+function PasswordSecurityCard({ user, onPasswordChanged }: { user: User; onPasswordChanged: () => void }) {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<PasswordErrors>({});
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const passwordEnabled = user.authProvider === "password";
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    const validation = validatePasswordChange(currentPassword, newPassword, confirmPassword);
+    setFieldErrors(validation);
+    if (Object.keys(validation).length > 0) {
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    try {
+      await api.auth.changePassword(currentPassword, newPassword);
+      onPasswordChanged();
+    } catch (err) {
+      setError(readableError(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card className="rounded-2xl p-5">
+      <CardHeader className="mb-5 items-start">
+        <div>
+          <CardTitle>Password</CardTitle>
+          <CardDescription>{passwordEnabled ? "Update your password. Current sessions will be signed out after the change." : "This account currently signs in with Google."}</CardDescription>
+        </div>
+      </CardHeader>
+      {passwordEnabled ? (
+        <form className="space-y-4" onSubmit={submit} noValidate>
+          {error ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-800">{error}</div> : null}
+          <AuthPasswordInput
+            autoComplete="current-password"
+            disabled={saving}
+            error={fieldErrors.currentPassword}
+            label="Current password"
+            onChange={(event) => {
+              setCurrentPassword(event.target.value);
+              setFieldErrors((current) => ({ ...current, currentPassword: undefined }));
+            }}
+            placeholder="Enter current password"
+            value={currentPassword}
+          />
+          <AuthPasswordInput
+            autoComplete="new-password"
+            disabled={saving}
+            error={fieldErrors.newPassword}
+            label="New password"
+            minLength={8}
+            onChange={(event) => {
+              setNewPassword(event.target.value);
+              setFieldErrors((current) => ({ ...current, newPassword: undefined }));
+            }}
+            placeholder="Enter new password"
+            value={newPassword}
+          />
+          <AuthPasswordInput
+            autoComplete="new-password"
+            disabled={saving}
+            error={fieldErrors.confirmPassword}
+            label="Confirm new password"
+            minLength={8}
+            onChange={(event) => {
+              setConfirmPassword(event.target.value);
+              setFieldErrors((current) => ({ ...current, confirmPassword: undefined }));
+            }}
+            placeholder="Repeat new password"
+            value={confirmPassword}
+          />
+          <Button className="rounded-lg" type="submit" disabled={saving}>
+            {saving ? "Updating password" : "Change password"}
+          </Button>
+        </form>
+      ) : (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-600">
+          Password changes are unavailable for Google-only accounts. Use Google account security settings to manage your sign-in password.
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -138,7 +237,7 @@ function ProductRulesCard() {
 }
 
 function MvpAvailabilityCard() {
-  const unavailable = ["Change email", "Change password", "Profile editing", "Card or Stripe checkout"];
+  const unavailable = ["Change email", "Profile editing", "Card or Stripe checkout"];
 
   return (
     <Card className="rounded-2xl border-slate-200 bg-slate-50 p-5">
@@ -159,6 +258,26 @@ function MvpAvailabilityCard() {
       </div>
     </Card>
   );
+}
+
+function validatePasswordChange(currentPassword: string, newPassword: string, confirmPassword: string): PasswordErrors {
+  const errors: PasswordErrors = {};
+  if (!currentPassword) {
+    errors.currentPassword = "Current password is required.";
+  }
+  if (!newPassword) {
+    errors.newPassword = "New password is required.";
+  } else if (newPassword.length < 8) {
+    errors.newPassword = "Password must be at least 8 characters.";
+  } else if (newPassword === currentPassword) {
+    errors.newPassword = "Choose a different password.";
+  }
+  if (!confirmPassword) {
+    errors.confirmPassword = "Confirm your new password.";
+  } else if (newPassword !== confirmPassword) {
+    errors.confirmPassword = "Passwords do not match.";
+  }
+  return errors;
 }
 
 function AccountActionsCard({ loggingOut, onLogout }: { loggingOut: boolean; onLogout: () => void }) {
@@ -201,6 +320,11 @@ export default function SettingsPage() {
     router.refresh();
   }
 
+  function handlePasswordChanged() {
+    router.push("/login");
+    router.refresh();
+  }
+
   useEffect(load, []);
 
   return (
@@ -223,6 +347,7 @@ export default function SettingsPage() {
           <section className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(340px,0.85fr)] 2xl:grid-cols-[minmax(0,1.45fr)_minmax(380px,0.85fr)]">
             <div className="space-y-6">
               <AccountProfileCard user={user} />
+              <PasswordSecurityCard user={user} onPasswordChanged={handlePasswordChanged} />
               <MvpAvailabilityCard />
             </div>
             <div className="space-y-6">

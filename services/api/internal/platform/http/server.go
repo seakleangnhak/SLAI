@@ -27,6 +27,7 @@ import (
 	"github.com/slai/slai/services/api/internal/auth"
 	"github.com/slai/slai/services/api/internal/config"
 	"github.com/slai/slai/services/api/internal/ledger"
+	"github.com/slai/slai/services/api/internal/notifications"
 	"github.com/slai/slai/services/api/internal/omniroute"
 	"github.com/slai/slai/services/api/internal/packages"
 	"github.com/slai/slai/services/api/internal/payments"
@@ -86,12 +87,40 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 	if omniRouteClient == nil {
 		omniRouteClient = omniroute.NewStubClient(cfg.OmniRoute, logger)
 	}
+	emailSender := cfg.EmailSender
+	if emailSender == nil {
+		if strings.TrimSpace(cfg.Email.BrevoAPIKey) != "" {
+			emailSender = auth.NewBrevoEmailSender(auth.BrevoConfig{
+				APIKey:  cfg.Email.BrevoAPIKey,
+				APIURL:  cfg.Email.BrevoAPIURL,
+				From:    cfg.Email.SMTPFrom,
+				Timeout: cfg.Email.SendTimeout,
+			})
+		} else if strings.TrimSpace(cfg.Email.SMTPHost) != "" {
+			emailSender = auth.NewSMTPEmailSender(auth.SMTPConfig{
+				Host:     cfg.Email.SMTPHost,
+				Port:     cfg.Email.SMTPPort,
+				Username: cfg.Email.SMTPUsername,
+				Password: cfg.Email.SMTPPassword,
+				From:     cfg.Email.SMTPFrom,
+				Timeout:  cfg.Email.SendTimeout,
+			})
+		} else {
+			emailSender = auth.NoopEmailSender{Log: logger}
+		}
+	}
+
 	apiKeyService := apikeys.NewService(pool, apikeys.Config{
 		Pepper:           cfg.APIKeyPepper,
 		Prefix:           cfg.APIKeyPrefix,
 		OmniRouteEnabled: cfg.OmniRoute.Enabled,
 	}, omniRouteClient, logger)
-	usageService := usage.NewService(pool, omniRouteClient, cfg.OmniRoute, logger)
+	notificationService := notifications.NewService(pool, emailSender, notifications.Config{
+		Enabled:        cfg.Email.LowBalanceAlertsEnabled,
+		ThresholdUnits: cfg.Email.LowBalanceAlertThresholdUnits,
+	})
+	usageService := usage.NewService(pool, omniRouteClient, cfg.OmniRoute, logger).
+		WithNotifications(notificationService)
 	usageSyncStatus := usage.NewSyncStatusTracker(cfg.UsageSyncWorker.Enabled)
 	usageSyncExecutor := usage.NewSyncExecutor(
 		usageService,
@@ -119,29 +148,6 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 		SLAIPaymentDefaultExpiry:   cfg.SLAIPayment.DefaultExpiry,
 	}).WithSLAIPaymentClient(cfg.SLAIPaymentClient).WithAutoResumeAPIKey(autoResumeAPIKey)
 
-	emailSender := cfg.EmailSender
-	if emailSender == nil {
-		if strings.TrimSpace(cfg.Email.BrevoAPIKey) != "" {
-			emailSender = auth.NewBrevoEmailSender(auth.BrevoConfig{
-				APIKey:  cfg.Email.BrevoAPIKey,
-				APIURL:  cfg.Email.BrevoAPIURL,
-				From:    cfg.Email.SMTPFrom,
-				Timeout: cfg.Email.SendTimeout,
-			})
-		} else if strings.TrimSpace(cfg.Email.SMTPHost) != "" {
-			emailSender = auth.NewSMTPEmailSender(auth.SMTPConfig{
-				Host:     cfg.Email.SMTPHost,
-				Port:     cfg.Email.SMTPPort,
-				Username: cfg.Email.SMTPUsername,
-				Password: cfg.Email.SMTPPassword,
-				From:     cfg.Email.SMTPFrom,
-				Timeout:  cfg.Email.SendTimeout,
-			})
-		} else {
-			emailSender = auth.NoopEmailSender{Log: logger}
-		}
-	}
-
 	authService := auth.NewService(pool, sessions).
 		WithEmailSender(emailSender).
 		WithSignupOTPTTL(cfg.Email.SignupOTPTTL).
@@ -157,7 +163,8 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 			cfg.Email.PasswordResetOTPRequestWindow,
 			cfg.Email.PasswordResetOTPMaxEmailRequests,
 			cfg.Email.PasswordResetOTPMaxIPRequests,
-		)
+		).
+		WithPasswordChangedAlerts(cfg.Email.PasswordChangedAlertsEnabled)
 	if strings.TrimSpace(cfg.GoogleClientID) != "" {
 		authService = authService.WithGoogleVerifier(auth.NewGoogleIDTokenVerifier(cfg.GoogleClientID))
 	}
@@ -200,6 +207,7 @@ func NewServer(cfg ServerConfig, pool *pgxpool.Pool, logger *slog.Logger) *Serve
 	mux.HandleFunc("POST /v1/auth/google", server.googleAuth)
 	mux.HandleFunc("POST /v1/auth/logout", server.logout)
 	mux.HandleFunc("GET /v1/me", server.me)
+	mux.HandleFunc("POST /v1/me/password", server.changePassword)
 	mux.HandleFunc("GET /v1/packages", server.listPublicPackages)
 	mux.HandleFunc("GET /v1/balance", server.balance)
 	mux.HandleFunc("GET /v1/ledger", server.ledgerEntries)
@@ -483,6 +491,23 @@ func writePasswordResetError(w http.ResponseWriter, err error) {
 	writeError(w, status, code, messageErr)
 }
 
+func writeChangePasswordError(w http.ResponseWriter, err error) {
+	status := http.StatusBadRequest
+	code := "password_change_failed"
+	messageErr := err
+	switch {
+	case errors.Is(err, auth.ErrInvalidCurrentPassword):
+		status = http.StatusUnauthorized
+		code = "invalid_current_password"
+		messageErr = nil
+	case errors.Is(err, auth.ErrPasswordAuthUnavailable):
+		status = http.StatusConflict
+		code = "password_auth_unavailable"
+		messageErr = nil
+	}
+	writeError(w, status, code, messageErr)
+}
+
 func clientIP(r *http.Request) string {
 	for _, header := range []string{"CF-Connecting-IP", "X-Real-IP", "X-Forwarded-For"} {
 		value := strings.TrimSpace(r.Header.Get(header))
@@ -566,6 +591,28 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"user": user})
+}
+
+func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		CurrentPassword string `json:"currentPassword"`
+		NewPassword     string `json:"newPassword"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	if err := s.authService.ChangePassword(r.Context(), user.ID, req.CurrentPassword, req.NewPassword); err != nil {
+		writeChangePasswordError(w, err)
+		return
+	}
+
+	s.sessions.ClearCookie(w)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) listPublicPackages(w http.ResponseWriter, r *http.Request) {

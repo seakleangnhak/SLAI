@@ -15,6 +15,7 @@ import (
 	"github.com/slai/slai/services/api/internal/apikeys"
 	"github.com/slai/slai/services/api/internal/config"
 	"github.com/slai/slai/services/api/internal/ledger"
+	"github.com/slai/slai/services/api/internal/notifications"
 	"github.com/slai/slai/services/api/internal/omniroute"
 	platformdb "github.com/slai/slai/services/api/internal/platform/db"
 )
@@ -25,10 +26,11 @@ var (
 )
 
 type Service struct {
-	pool         *pgxpool.Pool
-	omniRoute    omniroute.Client
-	omniRouteCfg config.OmniRouteConfig
-	logger       *slog.Logger
+	pool          *pgxpool.Pool
+	omniRoute     omniroute.Client
+	omniRouteCfg  config.OmniRouteConfig
+	logger        *slog.Logger
+	notifications notifications.Service
 }
 
 func NewService(pool *pgxpool.Pool, omniRoute omniroute.Client, omniRouteCfg config.OmniRouteConfig, logger *slog.Logger) Service {
@@ -36,6 +38,11 @@ func NewService(pool *pgxpool.Pool, omniRoute omniroute.Client, omniRouteCfg con
 		logger = slog.Default()
 	}
 	return Service{pool: pool, omniRoute: omniRoute, omniRouteCfg: omniRouteCfg, logger: logger}
+}
+
+func (s Service) WithNotifications(notifications notifications.Service) Service {
+	s.notifications = notifications
+	return s
 }
 
 func (s Service) IngestMockEvent(ctx context.Context, input IngestInput) (IngestResult, error) {
@@ -55,6 +62,7 @@ func (s Service) IngestEvent(ctx context.Context, input IngestInput) (IngestResu
 	}
 
 	var result IngestResult
+	var balanceAfterDebit *ledger.Balance
 	err := platformdb.InTx(ctx, s.pool, func(tx pgx.Tx) error {
 		existing, found, err := findUsageEvent(ctx, tx, input.ExternalSource, input.ExternalEventID)
 		if err != nil {
@@ -121,6 +129,7 @@ func (s Service) IngestEvent(ctx context.Context, input IngestInput) (IngestResu
 			if err != nil {
 				return err
 			}
+			balanceAfterDebit = &balance
 			if balance.AvailableUnits <= 0 {
 				suspended, err := s.suspendResolvedKey(ctx, tx, key)
 				if err != nil {
@@ -135,6 +144,11 @@ func (s Service) IngestEvent(ctx context.Context, input IngestInput) (IngestResu
 	})
 	if err != nil {
 		return IngestResult{}, err
+	}
+	if balanceAfterDebit != nil {
+		if err := s.notifications.MaybeSendLowBalanceAlert(ctx, *balanceAfterDebit); err != nil {
+			s.logger.Warn("low balance notification failed", "user_id", balanceAfterDebit.UserID, "error", err)
+		}
 	}
 
 	return result, nil

@@ -5,6 +5,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/slai/slai/services/api/internal/credits"
 )
 
 type Config struct {
@@ -84,6 +86,9 @@ type EmailConfig struct {
 	PasswordResetOTPRequestWindow    time.Duration
 	PasswordResetOTPMaxEmailRequests int
 	PasswordResetOTPMaxIPRequests    int
+	PasswordChangedAlertsEnabled     bool
+	LowBalanceAlertsEnabled          bool
+	LowBalanceAlertThresholdUnits    int64
 }
 
 func Load() (Config, error) {
@@ -208,6 +213,18 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	passwordChangedAlertsEnabled, err := boolFromEnv("PASSWORD_CHANGED_ALERTS_ENABLED", true)
+	if err != nil {
+		return Config{}, err
+	}
+	lowBalanceAlertsEnabled, err := boolFromEnv("LOW_BALANCE_ALERTS_ENABLED", true)
+	if err != nil {
+		return Config{}, err
+	}
+	lowBalanceAlertThresholdUnits, err := creditUnitsFromEnv("LOW_BALANCE_ALERT_THRESHOLD", "5")
+	if err != nil {
+		return Config{}, err
+	}
 
 	cfg := Config{
 		AppEnv:            stringFromEnv("APP_ENV", "development"),
@@ -275,6 +292,9 @@ func Load() (Config, error) {
 			PasswordResetOTPRequestWindow:    passwordResetOTPRequestWindow,
 			PasswordResetOTPMaxEmailRequests: passwordResetOTPMaxEmailRequests,
 			PasswordResetOTPMaxIPRequests:    passwordResetOTPMaxIPRequests,
+			PasswordChangedAlertsEnabled:     passwordChangedAlertsEnabled,
+			LowBalanceAlertsEnabled:          lowBalanceAlertsEnabled,
+			LowBalanceAlertThresholdUnits:    lowBalanceAlertThresholdUnits,
 		},
 	}
 
@@ -346,6 +366,9 @@ func Load() (Config, error) {
 	if cfg.Email.PasswordResetOTPMaxIPRequests <= 0 {
 		cfg.Email.PasswordResetOTPMaxIPRequests = 20
 	}
+	if cfg.Email.LowBalanceAlertThresholdUnits <= 0 {
+		cfg.Email.LowBalanceAlertThresholdUnits, _ = credits.FromWhole(5)
+	}
 	if (cfg.Email.SMTPHost != "" || cfg.Email.BrevoAPIKey != "") && cfg.Email.SMTPFrom == "" {
 		return Config{}, fmt.Errorf("EMAIL_FROM or SMTP_FROM is required when email delivery is configured")
 	}
@@ -415,6 +438,18 @@ func durationFromEnv(key string, fallback time.Duration) (time.Duration, error) 
 	parsed, err := time.ParseDuration(value)
 	if err != nil {
 		return 0, fmt.Errorf("parse %s as duration: %w", key, err)
+	}
+	return parsed, nil
+}
+
+func creditUnitsFromEnv(key string, fallback string) (int64, error) {
+	value, ok := os.LookupEnv(key)
+	if !ok || value == "" {
+		value = fallback
+	}
+	parsed, err := credits.FromDecimalString(value)
+	if err != nil {
+		return 0, fmt.Errorf("parse %s as credit amount: %w", key, err)
 	}
 	return parsed, nil
 }
