@@ -21,6 +21,7 @@ type Event struct {
 	ExternalSource  string         `json:"external_source"`
 	ExternalEventID string         `json:"external_event_id"`
 	OmniRouteKeyID  *string        `json:"omniroute_key_id"`
+	ComboName       *string        `json:"combo_name"`
 	Model           *string        `json:"model"`
 	Provider        *string        `json:"provider"`
 	InputTokens     int64          `json:"input_tokens"`
@@ -38,6 +39,7 @@ type IngestInput struct {
 	ExternalEventID   string
 	APIKeyID          *string
 	OmniRouteKeyID    *string
+	ComboName         *string
 	Model             *string
 	Provider          *string
 	InputTokens       int64

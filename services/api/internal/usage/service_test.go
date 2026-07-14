@@ -355,6 +355,14 @@ func TestRealOmniRouteClientBillingFlowWithFakeServer(t *testing.T) {
 	if result.Billed != 1 || result.Fetched != 1 {
 		t.Fatalf("sync result = %#v", result)
 	}
+	userID := user.ID
+	events, err := svc.ListEvents(context.Background(), usage.ListFilter{UserID: &userID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].ComboName == nil || *events[0].ComboName != "fast-combo" {
+		t.Fatalf("synced usage events = %#v", events)
+	}
 	assertBalanceAndLifetimeUsed(t, user.ID, -storedDecimal(t, "0.001"), storedDecimal(t, "1.001"))
 	assertKeyStatus(t, created.APIKey.ID, apikeys.StatusSuspended)
 	if fake.patchInactiveCalls != 1 {
@@ -668,6 +676,7 @@ func (f *fakeOmniRouteServer) handle(w http.ResponseWriter, r *http.Request) {
 		writeTestJSON(f.t, w, http.StatusOK, []map[string]any{{
 			"id":        "fake-log-1",
 			"apiKeyId":  "omni-key-1",
+			"comboName": "fast-combo",
 			"model":     "gpt-5.5",
 			"provider":  "openai",
 			"tokens":    map[string]any{"in": 1001, "out": 0},

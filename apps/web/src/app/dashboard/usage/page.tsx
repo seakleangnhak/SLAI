@@ -22,7 +22,6 @@ const secondaryButton =
 const statuses = ["pending", "billed", "duplicate", "failed", "ignored"];
 type FilterState = {
   model: string;
-  provider: string;
   status: string;
   from: string;
   to: string;
@@ -30,7 +29,6 @@ type FilterState = {
 
 const emptyFilters: FilterState = {
   model: "",
-  provider: "",
   status: "",
   from: "",
   to: ""
@@ -66,7 +64,6 @@ function hasActiveFilters(filters: FilterState) {
 function filtersToQuery(filters: FilterState, offset: number): UserUsageFilter {
   return {
     model: filters.model.trim() || undefined,
-    provider: filters.provider.trim() || undefined,
     status: filters.status || undefined,
     from: toISODateTime(filters.from),
     to: toISODateTime(filters.to),
@@ -140,9 +137,8 @@ function FilterBar({
   return (
     <Card className="rounded-2xl p-4">
       <form className="space-y-4" onSubmit={submit}>
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_0.8fr_1fr_1fr_auto] xl:items-end">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_0.8fr_1fr_1fr_auto] xl:items-end">
           <Input label="Model" placeholder="gpt-5.5" value={filters.model} onChange={(event) => setFilters({ ...filters, model: event.target.value })} />
-          <Input label="Provider" placeholder="openai" value={filters.provider} onChange={(event) => setFilters({ ...filters, provider: event.target.value })} />
           <label className="block">
             <span className="text-sm font-medium text-slate-700">Status</span>
             <select
@@ -198,7 +194,7 @@ function UsageTable({ usage, onSelect }: { usage: UsageEvent[]; onSelect: (event
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
             <tr>
-              {["Time", "Model", "Provider", "Tokens", "Cost", "Status", "Event ID", "Actions"].map((label) => (
+              {["Time", "Model", "Tokens", "Cost", "Status", "Event ID", "Actions"].map((label) => (
                 <th key={label} className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</th>
               ))}
             </tr>
@@ -207,8 +203,7 @@ function UsageTable({ usage, onSelect }: { usage: UsageEvent[]; onSelect: (event
             {usage.map((event) => (
               <tr key={event.id} className="hover:bg-slate-50">
                 <td className="whitespace-nowrap px-4 py-3 text-slate-600">{formatDateTime(event.occurred_at)}</td>
-                <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-950">{event.model ?? "-"}</td>
-                <td className="whitespace-nowrap px-4 py-3 text-slate-700">{event.provider ?? "-"}</td>
+                <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-950">{event.combo_name ?? event.model ?? "-"}</td>
                 <td className="whitespace-nowrap px-4 py-3 text-slate-700">
                   <div className="font-semibold text-slate-950">{formatUnits(event.total_tokens)}</div>
                   <div className="text-xs text-slate-500">{formatCompactUnits(event.input_tokens)} in / {formatCompactUnits(event.output_tokens)} out</div>
@@ -258,8 +253,7 @@ function UsageDetailsDrawer({ event, onClose }: { event: UsageEvent | null; onCl
             <DetailItem label="Event ID" value={event.id} mono />
             <DetailItem label="External ID" value={event.external_event_id} mono />
             <DetailItem label="Status" value={<Badge dot tone={statusTone(event.status)}>{event.status}</Badge>} />
-            <DetailItem label="Model" value={event.model ?? "-"} />
-            <DetailItem label="Provider" value={event.provider ?? "-"} />
+            <DetailItem label="Model" value={event.combo_name ?? event.model ?? "-"} />
             <DetailItem label="Input tokens" value={formatUnits(event.input_tokens)} />
             <DetailItem label="Output tokens" value={formatUnits(event.output_tokens)} />
             <DetailItem label="Total tokens" value={formatUnits(event.total_tokens)} />

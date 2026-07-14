@@ -49,6 +49,7 @@ type UpdateAPIKeyPayload struct {
 type CallLog struct {
 	ExternalID   string
 	APIKeyID     string
+	ComboName    string
 	Model        string
 	Provider     string
 	InputTokens  int64
@@ -61,6 +62,7 @@ type CallLog struct {
 type UsageRecord struct {
 	ExternalID string
 	APIKeyID   string
+	ComboName  string
 	Model      string
 	Provider   string
 	CostUnits  int64

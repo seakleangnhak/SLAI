@@ -173,6 +173,7 @@ func TestHTTPClientFetchCallLogsMapsLogs(t *testing.T) {
 		writeJSON(t, w, http.StatusOK, []map[string]any{{
 			"id":        "log-1",
 			"apiKeyId":  "omni-key-1",
+			"comboName": "fast-combo",
 			"model":     "gpt-5.5",
 			"provider":  "openai",
 			"tokens":    map[string]any{"in": 7240, "out": 357},
@@ -190,7 +191,7 @@ func TestHTTPClientFetchCallLogsMapsLogs(t *testing.T) {
 	if limit != "25" {
 		t.Fatalf("limit = %q", limit)
 	}
-	if len(logs) != 1 || logs[0].ExternalID != "log-1" || logs[0].APIKeyID != "omni-key-1" || logs[0].InputTokens != 7240 || logs[0].OutputTokens != 357 {
+	if len(logs) != 1 || logs[0].ExternalID != "log-1" || logs[0].APIKeyID != "omni-key-1" || logs[0].ComboName != "fast-combo" || logs[0].InputTokens != 7240 || logs[0].OutputTokens != 357 {
 		t.Fatalf("logs = %#v", logs)
 	}
 	wantCost, err := credits.FromDecimalString("1.25")

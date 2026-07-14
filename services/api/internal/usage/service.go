@@ -197,6 +197,7 @@ func (s Service) syncCallLogs(ctx context.Context, state syncState, limit int) (
 			ExternalSource:  ExternalSourceOmniRouteCallLogs,
 			ExternalEventID: log.ExternalID,
 			OmniRouteKeyID:  nullableString(log.APIKeyID),
+			ComboName:       nullableString(log.ComboName),
 			Model:           nullableString(log.Model),
 			Provider:        nullableString(log.Provider),
 			InputTokens:     log.InputTokens,
@@ -238,6 +239,7 @@ func (s Service) syncUsageHistory(ctx context.Context, state syncState, limit in
 			ExternalSource:    ExternalSourceOmniRouteUsageHistory,
 			ExternalEventID:   record.ExternalID,
 			OmniRouteKeyID:    nullableString(record.APIKeyID),
+			ComboName:         nullableString(record.ComboName),
 			Model:             nullableString(record.Model),
 			Provider:          nullableString(record.Provider),
 			OccurredAt:        record.OccurredAt,
@@ -268,7 +270,7 @@ func (s Service) ListEvents(ctx context.Context, filter ListFilter) ([]Event, er
 
 	query := `
 		SELECT id::text, user_id::text, api_key_id::text, external_source, external_event_id,
-		       omniroute_key_id, model, provider, input_tokens, output_tokens, total_tokens,
+		       omniroute_key_id, combo_name, model, provider, input_tokens, output_tokens, total_tokens,
 		       cost_units, status, occurred_at, raw_json, created_at
 		FROM usage_events
 		WHERE 1 = 1
@@ -444,13 +446,13 @@ func insertUsageEvent(ctx context.Context, tx pgx.Tx, key resolvedAPIKey, input 
 	event, err := scanEvent(tx.QueryRow(ctx, `
 		INSERT INTO usage_events (
 			user_id, api_key_id, external_source, external_event_id, omniroute_key_id,
-			model, provider, input_tokens, output_tokens, total_tokens, cost_units,
+			combo_name, model, provider, input_tokens, output_tokens, total_tokens, cost_units,
 			status, occurred_at, raw_json
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		ON CONFLICT (external_source, external_event_id) DO NOTHING
 		RETURNING id::text, user_id::text, api_key_id::text, external_source, external_event_id,
-		          omniroute_key_id, model, provider, input_tokens, output_tokens, total_tokens,
+		          omniroute_key_id, combo_name, model, provider, input_tokens, output_tokens, total_tokens,
 		          cost_units, status, occurred_at, raw_json, created_at
 	`,
 		key.UserID,
@@ -458,6 +460,7 @@ func insertUsageEvent(ctx context.Context, tx pgx.Tx, key resolvedAPIKey, input 
 		input.ExternalSource,
 		input.ExternalEventID,
 		key.OmniRouteKeyID,
+		input.ComboName,
 		input.Model,
 		input.Provider,
 		input.InputTokens,
@@ -480,7 +483,7 @@ func insertUsageEvent(ctx context.Context, tx pgx.Tx, key resolvedAPIKey, input 
 func findUsageEvent(ctx context.Context, tx pgx.Tx, source string, externalID string) (Event, bool, error) {
 	event, err := scanEvent(tx.QueryRow(ctx, `
 		SELECT id::text, user_id::text, api_key_id::text, external_source, external_event_id,
-		       omniroute_key_id, model, provider, input_tokens, output_tokens, total_tokens,
+		       omniroute_key_id, combo_name, model, provider, input_tokens, output_tokens, total_tokens,
 		       cost_units, status, occurred_at, raw_json, created_at
 		FROM usage_events
 		WHERE external_source = $1 AND external_event_id = $2
@@ -504,6 +507,7 @@ func scanEvent(row pgx.Row) (Event, error) {
 		&event.ExternalSource,
 		&event.ExternalEventID,
 		&event.OmniRouteKeyID,
+		&event.ComboName,
 		&event.Model,
 		&event.Provider,
 		&event.InputTokens,

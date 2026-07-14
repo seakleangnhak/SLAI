@@ -258,6 +258,7 @@ export type UsageEvent = {
   external_source: string;
   external_event_id: string;
   omniroute_key_id?: string | null;
+  combo_name?: string | null;
   model?: string | null;
   provider?: string | null;
   input_tokens: number;
@@ -369,6 +370,7 @@ export type AdminUsageEvent = {
   external_source: string;
   external_event_id: string;
   omniroute_key_id?: string | null;
+  combo_name?: string | null;
   model?: string | null;
   provider?: string | null;
   input_tokens: number;

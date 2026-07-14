@@ -382,6 +382,7 @@ func mapCallLog(raw map[string]any) (CallLog, error) {
 	return CallLog{
 		ExternalID:   externalID,
 		APIKeyID:     stringField(raw, "apiKeyId", "api_key_id"),
+		ComboName:    stringField(raw, "comboName", "combo_name"),
 		Model:        stringField(raw, "model", "requestedModel", "requested_model"),
 		Provider:     stringField(raw, "provider", "connectionProvider", "connectionName", "connection_id"),
 		InputTokens:  int64Field(raw, []string{"inputTokens", "promptTokens", "tokensIn", "tokens_in"}, []string{"tokens", "in"}, []string{"tokens", "input"}),
@@ -409,6 +410,7 @@ func mapUsageRecord(raw map[string]any) (UsageRecord, error) {
 	return UsageRecord{
 		ExternalID: externalID,
 		APIKeyID:   apiKeyID,
+		ComboName:  stringField(raw, "comboName", "combo_name"),
 		Model:      stringField(raw, "model"),
 		Provider:   stringField(raw, "provider", "connectionProvider", "connectionName"),
 		CostUnits:  costUnits,
