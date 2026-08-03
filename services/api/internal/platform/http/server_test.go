@@ -1433,6 +1433,140 @@ func TestPreventBalanceMutationOutsideLedgerService(t *testing.T) {
 	assertBalance(t, user.ID, 0)
 }
 
+func TestBalanceAcceptsSessionOrAPIKey(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	client := newTestClient(t)
+	user := createUser(t, "balance@example.com", users.RoleUser)
+	cookies := loginCookies(t, client, user.Email)
+
+	sessionResponse := client.get(t, "/v1/balance", cookies)
+	assertStatus(t, sessionResponse, http.StatusOK)
+	if got := stringField(t, sessionResponse.JSON, "balance.userId"); got != user.ID {
+		t.Fatalf("session balance user = %q, want %q", got, user.ID)
+	}
+
+	created := client.post(t, "/v1/api-key", map[string]any{"name": "Default"}, cookies)
+	assertStatus(t, created, http.StatusCreated)
+	rawKey := stringField(t, created.JSON, "raw_api_key")
+
+	bearerResponse := client.getWithHeaders(t, "/v1/balance", nil, map[string]string{
+		"Authorization": "Bearer " + rawKey,
+	})
+	assertStatus(t, bearerResponse, http.StatusOK)
+	if got := stringField(t, bearerResponse.JSON, "balance.userId"); got != user.ID {
+		t.Fatalf("bearer balance user = %q, want %q", got, user.ID)
+	}
+	for _, path := range []string{
+		"balance.availableUnits",
+		"balance.lifetimePurchasedUnits",
+		"balance.lifetimeUsedUnits",
+		"balance.version",
+	} {
+		_ = numberField(t, bearerResponse.JSON, path)
+	}
+	if got := stringField(t, bearerResponse.JSON, "balance.updatedAt"); got == "" {
+		t.Fatal("balance.updatedAt is empty")
+	}
+}
+
+func TestBalanceAcceptsSuspendedAPIKey(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	client := newTestClient(t)
+	user := createUser(t, "suspended-key@example.com", users.RoleUser)
+	cookies := loginCookies(t, client, user.Email)
+	created := client.post(t, "/v1/api-key", map[string]any{"name": "Default"}, cookies)
+	assertStatus(t, created, http.StatusCreated)
+	rawKey := stringField(t, created.JSON, "raw_api_key")
+
+	service := apikeys.NewService(testDB, apikeys.Config{
+		Pepper: "test-api-key-pepper",
+		Prefix: "sk_slai",
+	}, nil, slog.Default())
+	if _, err := service.SuspendAPIKey(context.Background(), user.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	response := client.getWithHeaders(t, "/v1/balance", nil, map[string]string{
+		"Authorization": "Bearer " + rawKey,
+	})
+	assertStatus(t, response, http.StatusOK)
+	if got := stringField(t, response.JSON, "balance.userId"); got != user.ID {
+		t.Fatalf("balance user = %q, want %q", got, user.ID)
+	}
+}
+
+func TestBalanceRejectsInvalidAPIKeyWithoutCookieFallback(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	client := newTestClient(t)
+	user := createUser(t, "cookie-owner@example.com", users.RoleUser)
+	cookies := loginCookies(t, client, user.Email)
+
+	for _, authorization := range []string{"", "Basic invalid", "Bearer sk_slai_unknown"} {
+		response := client.getWithHeaders(t, "/v1/balance", cookies, map[string]string{
+			"Authorization": authorization,
+		})
+		assertStatus(t, response, http.StatusUnauthorized)
+		if got := stringField(t, response.JSON, "error"); got != "unauthenticated" {
+			t.Fatalf("error = %q, want unauthenticated", got)
+		}
+	}
+}
+
+func TestBalanceRejectsRevokedKeyAndSuspendedUser(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(t *testing.T, service apikeys.Service, user users.User)
+	}{
+		{
+			name: "revoked key",
+			configure: func(t *testing.T, service apikeys.Service, user users.User) {
+				t.Helper()
+				if _, err := service.RevokeAPIKey(context.Background(), user.ID); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "suspended user",
+			configure: func(t *testing.T, _ apikeys.Service, user users.User) {
+				t.Helper()
+				if _, err := testDB.Exec(context.Background(), `UPDATE users SET status = $2 WHERE id = $1`, user.ID, users.StatusSuspended); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requireDB(t)
+			truncateTables(t)
+			client := newTestClient(t)
+			user := createUser(t, strings.ReplaceAll(tt.name, " ", "-")+"@example.com", users.RoleUser)
+			cookies := loginCookies(t, client, user.Email)
+			created := client.post(t, "/v1/api-key", map[string]any{"name": "Default"}, cookies)
+			assertStatus(t, created, http.StatusCreated)
+			rawKey := stringField(t, created.JSON, "raw_api_key")
+			service := apikeys.NewService(testDB, apikeys.Config{
+				Pepper: "test-api-key-pepper",
+				Prefix: "sk_slai",
+			}, nil, slog.Default())
+			tt.configure(t, service, user)
+
+			response := client.getWithHeaders(t, "/v1/balance", nil, map[string]string{
+				"Authorization": "Bearer " + rawKey,
+			})
+			assertStatus(t, response, http.StatusUnauthorized)
+			if got := stringField(t, response.JSON, "error"); got != "unauthenticated" {
+				t.Fatalf("error = %q, want unauthenticated", got)
+			}
+		})
+	}
+}
+
 func TestLedgerServiceMutation(t *testing.T) {
 	requireDB(t)
 	truncateTables(t)
@@ -2194,9 +2328,17 @@ func (c testClient) patch(t *testing.T, path string, payload any, cookies []*htt
 
 func (c testClient) get(t *testing.T, path string, cookies []*http.Cookie) testResponse {
 	t.Helper()
+	return c.getWithHeaders(t, path, cookies, nil)
+}
+
+func (c testClient) getWithHeaders(t *testing.T, path string, cookies []*http.Cookie, headers map[string]string) testResponse {
+	t.Helper()
 	req, err := http.NewRequest(http.MethodGet, c.server.URL+path, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for key, value := range headers {
+		req.Header.Set(key, value)
 	}
 	for _, cookie := range cookies {
 		req.AddCookie(cookie)

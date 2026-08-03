@@ -597,6 +597,18 @@ Public and authenticated endpoints:
 - `POST /v1/api-key/rotate`
 - `DELETE /v1/api-key`
 
+`GET /v1/balance` accepts either the authenticated `slai_session` cookie or the
+user's SLAI API key. API-key clients can read their balance with:
+
+```sh
+curl -sS "$SLAI_API_URL/v1/balance" \
+  -H "Authorization: Bearer $SLAI_RAW_API_KEY"
+```
+
+The `availableUnits`, `lifetimePurchasedUnits`, and `lifetimeUsedUnits` values
+are integer micro-units. Divide them by `1,000,000` to display credits.
+Suspended API keys retain read-only balance access; revoked keys do not.
+
 Admin endpoints:
 
 - `GET /v1/admin/dashboard`

@@ -625,11 +625,11 @@ func (s *Server) listPublicPackages(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) balance(w http.ResponseWriter, r *http.Request) {
-	user, ok := s.requireUser(w, r)
+	userID, ok := s.requireBalanceUserID(w, r)
 	if !ok {
 		return
 	}
-	balance, err := ledger.NewService(s.db).GetBalance(r.Context(), user.ID)
+	balance, err := ledger.NewService(s.db).GetBalance(r.Context(), userID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "balance_failed", err)
 		return
@@ -1508,6 +1508,34 @@ func (s *Server) requireUser(w http.ResponseWriter, r *http.Request) (users.User
 		return users.User{}, false
 	}
 	return user, true
+}
+
+func (s *Server) requireBalanceUserID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	_, hasAuthorization := r.Header[http.CanonicalHeaderKey("Authorization")]
+	if hasAuthorization {
+		rawKey := bearerToken(r.Header.Get("Authorization"))
+		if rawKey == "" {
+			writeError(w, http.StatusUnauthorized, "unauthenticated", nil)
+			return "", false
+		}
+		userID, err := s.apiKeyService.AuthenticateBalanceKey(r.Context(), rawKey)
+		if errors.Is(err, apikeys.ErrNotFound) {
+			writeError(w, http.StatusUnauthorized, "unauthenticated", nil)
+			return "", false
+		}
+		if err != nil {
+			s.log.Error("balance api key authentication failed", "error", err)
+			writeError(w, http.StatusInternalServerError, "balance_auth_failed", nil)
+			return "", false
+		}
+		return userID, true
+	}
+
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return "", false
+	}
+	return user.ID, true
 }
 
 func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) (users.User, bool) {
