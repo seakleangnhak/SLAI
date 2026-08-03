@@ -63,6 +63,30 @@ func (s Service) GetLatestAPIKey(ctx context.Context, userID string) (APIKey, er
 	return getLatestAPIKey(ctx, s.pool, userID)
 }
 
+func (s Service) AuthenticateBalanceKey(ctx context.Context, rawKey string) (string, error) {
+	rawKey = strings.TrimSpace(rawKey)
+	if rawKey == "" {
+		return "", ErrNotFound
+	}
+
+	var userID string
+	err := s.pool.QueryRow(ctx, `
+		SELECT ak.user_id::text
+		FROM api_keys ak
+		JOIN users u ON u.id = ak.user_id
+		WHERE ak.key_hash = $1
+		  AND ak.status IN ($2, $3)
+		  AND u.status = $4
+	`, HashRawKey(rawKey, s.cfg.Pepper), StatusActive, StatusSuspended, users.StatusActive).Scan(&userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("authenticate balance api key: %w", err)
+	}
+	return userID, nil
+}
+
 func (s Service) ProvisionOmniRouteKeyForRawKey(ctx context.Context, rawKey string) (OmniRouteProvisionedAPIKey, error) {
 	rawKey = strings.TrimSpace(rawKey)
 	if rawKey == "" {

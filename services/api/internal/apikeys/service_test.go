@@ -84,6 +84,100 @@ func TestCreateAPIKeyStoresHashAndPrefixOnly(t *testing.T) {
 	}
 }
 
+func TestAuthenticateBalanceKeyAcceptsActiveAndSuspendedKeys(t *testing.T) {
+	requireDB(t)
+	truncateTables(t)
+	user := createUser(t, "balance-owner@example.com", users.RoleUser)
+	service := localService()
+	created, err := service.CreateAPIKey(context.Background(), user.ID, "Default")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	userID, err := service.AuthenticateBalanceKey(context.Background(), created.RawAPIKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if userID != user.ID {
+		t.Fatalf("user id = %q, want %q", userID, user.ID)
+	}
+
+	if _, err := service.SuspendAPIKey(context.Background(), user.ID); err != nil {
+		t.Fatal(err)
+	}
+	userID, err = service.AuthenticateBalanceKey(context.Background(), created.RawAPIKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if userID != user.ID {
+		t.Fatalf("suspended key user id = %q, want %q", userID, user.ID)
+	}
+}
+
+func TestAuthenticateBalanceKeyRejectsUnusableCredentials(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(t *testing.T, service apikeys.Service, user users.User)
+		rawKey    func(created apikeys.CreatedAPIKey) string
+	}{
+		{
+			name: "unknown key",
+			rawKey: func(apikeys.CreatedAPIKey) string {
+				return "sk_slai_unknown"
+			},
+		},
+		{
+			name: "blank key",
+			rawKey: func(apikeys.CreatedAPIKey) string {
+				return "   "
+			},
+		},
+		{
+			name: "revoked key",
+			configure: func(t *testing.T, service apikeys.Service, user users.User) {
+				t.Helper()
+				if _, err := service.RevokeAPIKey(context.Background(), user.ID); err != nil {
+					t.Fatal(err)
+				}
+			},
+			rawKey: func(created apikeys.CreatedAPIKey) string {
+				return created.RawAPIKey
+			},
+		},
+		{
+			name: "suspended user",
+			configure: func(t *testing.T, _ apikeys.Service, user users.User) {
+				t.Helper()
+				if _, err := testDB.Exec(context.Background(), `UPDATE users SET status = $2 WHERE id = $1`, user.ID, users.StatusSuspended); err != nil {
+					t.Fatal(err)
+				}
+			},
+			rawKey: func(created apikeys.CreatedAPIKey) string {
+				return created.RawAPIKey
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			truncateTables(t)
+			user := createUser(t, strings.ReplaceAll(tt.name, " ", "-")+"@example.com", users.RoleUser)
+			service := localService()
+			created, err := service.CreateAPIKey(context.Background(), user.ID, "Default")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.configure != nil {
+				tt.configure(t, service, user)
+			}
+
+			if _, err := service.AuthenticateBalanceKey(context.Background(), tt.rawKey(created)); !errors.Is(err, apikeys.ErrNotFound) {
+				t.Fatalf("error = %v, want ErrNotFound", err)
+			}
+		})
+	}
+}
+
 func TestCannotCreateSecondActiveAPIKey(t *testing.T) {
 	requireDB(t)
 	truncateTables(t)
